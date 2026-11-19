@@ -24,7 +24,15 @@ from app.models import (
     TestCase,
     TestCaseVersion,
 )
-from app.parsers import case_seq_from_key, parse_file, parse_pending_notes, version_from_html
+from app.parsers import (
+    build_priority_stats,
+    case_seq_from_key,
+    extract_case_document_info,
+    parse_file,
+    parse_pending_notes,
+    count_untested_cases,
+    version_from_html,
+)
 from app.seed import bump_latest, store_file, upsert_case_version, upsert_report_version, version_key
 
 app = FastAPI(title="测谱 · 测试用例与报告平台", version="0.1.0")
@@ -889,6 +897,8 @@ def get_case_docs(
     from app.reviews import case_endpoint_results, product_case_versions
 
     versions = product_case_versions(db, product_id)
+    empty_info = {"available": False, "title": "", "fields": [], "fragment_page": ""}
+    empty_stats = {"total": 0, "priorities": [], "untested": 0}
     empty = {
         "product": product_out(product),
         "version": version,
@@ -900,6 +910,8 @@ def get_case_docs(
         "priorities": [],
         "pending": [],
         "source_file": "",
+        "priority_stats": empty_stats,
+        "case_info": empty_info,
     }
     if not versions:
         return empty
@@ -978,10 +990,16 @@ def get_case_docs(
             }
         )
     pending: list[str] = []
+    case_info = {"available": False, "title": "", "fields": [], "fragment_page": ""}
+    untested = 0
     if source_file:
         path = resolve_file(source_file)
         if path and path.suffix.lower() in {".html", ".htm"}:
-            pending = parse_pending_notes(path.read_text(encoding="utf-8", errors="replace"))
+            html_text = path.read_text(encoding="utf-8", errors="replace")
+            pending = parse_pending_notes(html_text)
+            case_info = extract_case_document_info(html_text)
+            untested = count_untested_cases(html_text)
+    priority_stats = build_priority_stats([lv.priority for _c, lv in rows], untested)
     return {
         "product": product_out(product),
         "version": current,
@@ -993,6 +1011,8 @@ def get_case_docs(
         "priorities": priorities,
         "pending": pending,
         "source_file": source_file,
+        "priority_stats": priority_stats,
+        "case_info": case_info,
     }
 
 

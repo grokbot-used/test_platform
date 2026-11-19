@@ -1,6 +1,6 @@
 services:
   web:
-    image: test_platform:0.1.1
+    image: test_platform:0.1.2
     build: .
     ports:
       - "8080:8080"

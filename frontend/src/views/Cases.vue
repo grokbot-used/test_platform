@@ -10,7 +10,7 @@
           共 {{ doc.total || 0 }} 条 · 每张卡片右侧显示该条在各端的推演结论
         </p>
         <div class="hero-controls">
-          <label>产品
+          <label>需求
             <select v-model="productId" @change="onProductChange">
               <option v-for="p in products" :key="p.id" :value="String(p.id)">{{ p.name }}</option>
             </select>
@@ -30,6 +30,26 @@
         </ul>
       </div>
 
+      <div v-if="showPriorityStats" class="priority-stats" aria-label="优先级统计栏">
+        <div class="stat-card stat-total">
+          <span class="label">用例总数</span>
+          <span class="num">{{ priorityStats.total }}</span>
+        </div>
+        <div
+          v-for="p in priorityStats.priorities"
+          :key="p.priority"
+          class="stat-card"
+          :class="'stat-' + (p.priority || '').toLowerCase()"
+        >
+          <span class="label">{{ p.priority }}（{{ formatPercent(p.percent) }}%）</span>
+          <span class="num">{{ p.count }}</span>
+        </div>
+        <div v-if="(priorityStats.untested || 0) > 0" class="stat-card stat-skip">
+          <span class="label">不测</span>
+          <span class="num">{{ priorityStats.untested }}</span>
+        </div>
+      </div>
+
       <div class="toolbar">
         <label>优先级
           <select v-model="priority" @change="onFilterChange">
@@ -41,6 +61,7 @@
           <input v-model="qInput" type="search" placeholder="编号 / 标题 / 字符" />
         </label>
         <button class="btn-export" type="button" @click="exportTable">导出表格</button>
+        <button class="btn-export" type="button" @click="openCaseInfo">用例信息</button>
         <label>每页
           <select v-model.number="pageSize" @change="onPageSizeChange">
             <option :value="20">20</option>
@@ -113,10 +134,15 @@
     </div>
 
     <div v-if="modal.open" class="review-mask" @click.self="closeModal">
-      <div class="review-modal" role="dialog" aria-modal="true">
+      <div class="review-modal" role="dialog" aria-modal="true" aria-labelledby="review-modal-title">
         <header class="modal-hd">
-          <div>
-            <h2>{{ modalTitle }}</h2>
+          <div class="modal-title-row">
+            <h2 id="review-modal-title">{{ modalTitle }}</h2>
+            <span
+              v-if="modal.data?.result_label"
+              class="tag"
+              :class="'res-' + (modal.data.result || 'empty')"
+            >{{ modal.data.result_label }}</span>
           </div>
           <button class="btn-close" type="button" @click="closeModal">关闭</button>
         </header>
@@ -124,12 +150,11 @@
           <p v-if="modal.loading" class="muted">正在加载…</p>
           <p v-else-if="modal.error" class="err">{{ modal.error }}</p>
           <template v-else-if="modal.data">
-            <div class="modal-meta">
-              <span>端：{{ modal.data.label }}</span>
-              <span>用例：{{ modal.data.case_key }}</span>
-              <span v-if="modal.data.report_version">报告版本：{{ modal.data.report_version }}</span>
-              <span v-if="modal.data.based_on_case_version">依据用例版本：{{ modal.data.based_on_case_version }}</span>
-              <span v-if="modal.data.result_label" class="tag" :class="'res-' + (modal.data.result || 'empty')">{{ modal.data.result_label }}</span>
+            <div v-if="reviewSourceMeta.length" class="review-source-meta">
+              <div v-for="item in reviewSourceMeta" :key="item.label" class="review-source-item">
+                <span class="k">{{ item.label }}</span>
+                <span class="v">{{ item.value }}</span>
+              </div>
             </div>
             <iframe
               v-if="fragmentPage"
@@ -140,6 +165,33 @@
             ></iframe>
             <p v-else class="modal-msg">{{ emptyReviewMessage }}</p>
           </template>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="infoModal.open" class="review-mask" @click.self="closeCaseInfo">
+      <div class="review-modal" role="dialog" aria-modal="true" aria-labelledby="case-info-title">
+        <header class="modal-hd">
+          <div class="modal-title-row">
+            <h2 id="case-info-title">用例信息</h2>
+          </div>
+          <button class="btn-close" type="button" @click="closeCaseInfo">关闭</button>
+        </header>
+        <div class="modal-body">
+          <iframe
+            v-if="caseInfoPage"
+            class="review-frame review-srcdoc"
+            :srcdoc="caseInfoPage"
+            sandbox="allow-same-origin allow-popups"
+            title="用例信息"
+          ></iframe>
+          <dl v-else-if="caseInfoFields.length" class="review-fields case-info-fields">
+            <template v-for="field in caseInfoFields" :key="field.label">
+              <dt>{{ field.label }}</dt>
+              <dd>{{ field.value }}</dd>
+            </template>
+          </dl>
+          <p v-else class="modal-msg">当前用例文档没有可展示的额外信息</p>
         </div>
       </div>
     </div>
@@ -191,6 +243,7 @@ const selectedId = ref(null);
 const loading = ref(false);
 const error = ref("");
 const modal = ref({ open: false, loading: false, error: "", data: null, endpoint: "" });
+const infoModal = ref({ open: false });
 
 let qTimer = null;
 
@@ -221,6 +274,28 @@ const fragmentPage = computed(() => {
   const pageHtml = modal.value.data?.fragment_page;
   return typeof pageHtml === "string" ? pageHtml : "";
 });
+
+const priorityStats = computed(() => doc.value.priority_stats || { total: 0, priorities: [], untested: 0 });
+const showPriorityStats = computed(() => (priorityStats.value.total || 0) > 0 || (priorityStats.value.untested || 0) > 0);
+
+const caseInfo = computed(() => doc.value.case_info || { available: false, title: "", fields: [], fragment_page: "" });
+const caseInfoPage = computed(() => (typeof caseInfo.value.fragment_page === "string" ? caseInfo.value.fragment_page : ""));
+const caseInfoFields = computed(() => caseInfo.value.fields || []);
+
+const reviewSourceMeta = computed(() => {
+  const d = modal.value.data || {};
+  return [
+    { label: "仓库", value: d.repo },
+    { label: "分支", value: d.branch },
+    { label: "参与人", value: d.participants },
+  ].filter((item) => String(item.value || "").trim());
+});
+
+function formatPercent(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "0.0";
+  return n.toFixed(1);
+}
 
 const emptyReviewMessage = computed(() => {
   const msg = modal.value.data?.message;
@@ -377,8 +452,21 @@ function closeModal() {
   modal.value = { open: false, loading: false, error: "", data: null, endpoint: "" };
 }
 
+function openCaseInfo() {
+  infoModal.value = { open: true };
+}
+
+function closeCaseInfo() {
+  infoModal.value = { open: false };
+}
+
 function onKey(e) {
-  if (e.key === "Escape" && modal.value.open) closeModal();
+  if (e.key !== "Escape") return;
+  if (infoModal.value.open) {
+    closeCaseInfo();
+    return;
+  }
+  if (modal.value.open) closeModal();
 }
 
 async function exportTable() {

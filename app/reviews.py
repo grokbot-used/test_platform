@@ -12,6 +12,7 @@ from app.models import Product, Report, ReportCaseLink, ReportVersion, TestCase,
 from app.parsers import (
     detect_app_platforms,
     extract_report_case_detail,
+    extract_report_header_meta,
     infer_based_on_case_version,
     is_app_review,
 )
@@ -269,6 +270,9 @@ def review_detail(
         "anchor": "",
         "preview_url": "",
         "message": "",
+        "repo": "",
+        "branch": "",
+        "participants": "",
     }
     if not entry["available"]:
         base["message"] = f"当前用例版本 {case_version} 暂无{ENDPOINT_LABELS[endpoint]}推演结果"
@@ -291,6 +295,8 @@ def review_detail(
         base["preview_url"] = f"/api/report-versions/{rv.id}/preview"
     html = _read_source(src) if ext in {".html", ".htm"} else ""
     if html:
+        header_meta = extract_report_header_meta(html)
+        base.update(header_meta)
         detail = extract_report_case_detail(html, case.key)
         base.update(
             {

@@ -806,6 +806,8 @@ def extract_report_case_detail(html: str, case_key: str) -> dict:
     if found is None:
         return empty
 
+    _rewrite_case_heading(found)
+    _strip_review_chrome_fields(found)
     heading = ""
     h = found.find(["h2", "h3", "h4", "header"])
     if h:
@@ -863,3 +865,351 @@ def is_app_review(title: str = "", filename: str = "", typ: str = "") -> bool:
     if typ and typ not in {"frontend_review", ""}:
         return False
     return bool(re.search(r"(?<![A-Za-z])APP(?![A-Za-z])|安卓|\bAndroid\b|\biOS\b", blob, re.I))
+
+
+# ---- case document preamble / priority stats / report header meta ----
+
+DROPPED_REVIEW_LABELS = {
+    "推演用例编号",
+    "用例标题",
+    "标题",
+    "问题级别",
+}
+
+_HEADING_SEQ_RE = re.compile(
+    r"^(#{1,6}[ \t]+)?#?(\d{1,4})(?!\d)(.*)$",
+    re.S,
+)
+_ALREADY_HASH_SEQ_RE = re.compile(r"^(#{1,6}[ \t]+)?#\d")
+
+
+def count_untested_cases(html: str) -> int:
+    """Count case cards marked 不测; ignore kpi chips and other non-card marks."""
+    if not html or "data-skip" not in html:
+        return 0
+    soup = BeautifulSoup(html, "lxml")
+    seen: set[int] = set()
+    count = 0
+    for el in soup.select("article.case[data-skip], .case[data-skip]"):
+        if el.find_parent(class_="kpi-row"):
+            continue
+        classes = el.get("class") or []
+        if el.name != "article" and "case" not in classes:
+            continue
+        ident = id(el)
+        if ident in seen:
+            continue
+        seen.add(ident)
+        count += 1
+    return count
+
+
+def build_priority_stats(priority_values: list[str], untested: int = 0) -> dict:
+    """priority_values is one entry per case in the version (empty string allowed)."""
+    total = len(priority_values)
+    counts: dict[str, int] = {}
+    for raw in priority_values:
+        label = (raw or "").strip()
+        if not label:
+            continue
+        counts[label] = counts.get(label, 0) + 1
+
+    def sort_key(name: str) -> tuple:
+        order = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
+        return (order.get(name, 100), name)
+
+    priorities = []
+    for name in sorted(counts, key=sort_key):
+        count = counts[name]
+        percent = round(count / total * 100, 1) if total else 0
+        priorities.append({"priority": name, "count": count, "percent": percent})
+    return {
+        "total": total,
+        "priorities": priorities,
+        "untested": int(untested or 0),
+    }
+
+
+def _normalize_meta_label(label: str) -> str:
+    return re.sub(r"\s+", " ", (label or "").strip()).rstrip("：:").strip()
+
+
+def _is_dropped_review_label(label: str) -> bool:
+    text = _normalize_meta_label(label)
+    if not text:
+        return False
+    if text in DROPPED_REVIEW_LABELS:
+        return True
+    return any(text.startswith(prefix) for prefix in ("推演用例编号", "用例标题", "问题级别"))
+
+
+def _format_heading_seq(text: str) -> str:
+    raw = text or ""
+    if _ALREADY_HASH_SEQ_RE.match(raw.lstrip("\n")):
+        # still format if leading whitespace-only prefix
+        m_lead = re.match(r"^([ \t]*)(.*)$", raw, re.S)
+        if m_lead and _ALREADY_HASH_SEQ_RE.match(m_lead.group(2)):
+            return raw
+    m = _HEADING_SEQ_RE.match(raw)
+    if not m:
+        return raw
+    prefix, num, rest = m.group(1) or "", m.group(2), m.group(3) or ""
+    if raw[len(prefix) :].startswith("#"):
+        return raw
+    return f"{prefix}#{num}{rest}"
+
+
+def _rewrite_case_heading(el: Tag) -> None:
+    heading = el.find(["h2", "h3", "h4", "header"])
+    if heading is None:
+        return
+    # Prefer a bare .num chip when present (e.g. <span class="num">1</span>)
+    num_el = heading.find(class_="num")
+    if num_el is not None:
+        current = text_of(num_el)
+        if re.fullmatch(r"\d{1,4}", current or ""):
+            num_el.clear()
+            num_el.append(f"#{current}")
+            return
+    for node in heading.contents:
+        if isinstance(node, NavigableString) and str(node).strip():
+            raw = str(node)
+            lead = re.match(r"^(\s*)(.*)$", raw, re.S)
+            if not lead:
+                break
+            updated = _format_heading_seq(lead.group(2))
+            if updated != lead.group(2):
+                node.replace_with(lead.group(1) + updated)
+            break
+
+
+def _strip_review_chrome_fields(el: Tag) -> None:
+    for tr in list(el.find_all("tr")):
+        cells = tr.find_all(["th", "td"], recursive=False)
+        if not cells:
+            cells = tr.find_all(["th", "td"])
+        if not cells:
+            continue
+        if _is_dropped_review_label(text_of(cells[0])):
+            tr.decompose()
+    for field in list(el.select(".field")):
+        k = field.select_one(".k") or field.find(["dt", "th", "strong", "b"])
+        label = text_of(k) if k else ""
+        if _is_dropped_review_label(label):
+            field.decompose()
+    for table in list(el.find_all("table")):
+        if not table.find("tr"):
+            table.decompose()
+
+
+def _value_after_label(node: Tag, label_el: Tag) -> str:
+    clone = BeautifulSoup(str(node), "lxml")
+    root = clone.body or clone
+    target = root.find(["b", "strong"])
+    if target:
+        target.decompose()
+    return text_of(root).lstrip("：: ").strip()
+
+
+def _fields_from_doc_meta(soup: BeautifulSoup) -> list[dict]:
+    fields: list[dict] = []
+    seen: set[str] = set()
+
+    def add(label: str, value: str) -> None:
+        lab = _normalize_meta_label(label)
+        val = (value or "").strip()
+        if not lab or not val:
+            return
+        key = lab
+        if key in seen:
+            return
+        seen.add(key)
+        fields.append({"label": lab, "value": val})
+
+    for meta in soup.select(".meta"):
+        for tr in meta.select("table tr"):
+            cells = tr.find_all(["th", "td"])
+            if len(cells) >= 2:
+                add(text_of(cells[0]), text_of(cells[1]))
+        for node in meta.find_all(["p", "div", "li", "span"]):
+            if node.find("table"):
+                continue
+            if node.find_parent("table"):
+                continue
+            label_el = node.find(["b", "strong"], recursive=False)
+            if label_el is None:
+                # one level down, e.g. GMA <div><b>…</b> value</div> already is this node
+                continue
+            # skip containers that themselves wrap several labeled children
+            labeled_kids = [
+                child
+                for child in node.find_all(["p", "div"], recursive=False)
+                if child.find(["b", "strong"], recursive=False)
+            ]
+            if labeled_kids:
+                continue
+            add(text_of(label_el), _value_after_label(node, label_el))
+    return fields
+
+
+def _is_case_list_table(table: Tag) -> bool:
+    if table.find_parent(class_=["skip-sum", "meta", "card", "hero", "pending", "summary", "hero-meta"]):
+        return False
+    classes = " ".join(table.get("class") or []).lower()
+    ident = (table.get("id") or "").lower()
+    if "cases" in classes or ident in {"cases", "case-table", "case-list"}:
+        return True
+    first = table.find("tr")
+    if not first:
+        return False
+    headers = " ".join(text_of(c) for c in first.find_all(["th", "td"]))
+    row_count = len(table.find_all("tr"))
+    has_id = any(token in headers for token in ("编号", "用例描述", "标题", "序号"))
+    has_body = any(token in headers for token in ("优先级", "步骤", "预期结果", "前置", "操作步骤"))
+    return row_count >= 5 and has_id and has_body
+
+
+def extract_case_document_info(html: str) -> dict:
+    """Preamble of a case HTML document, excluding the case list itself."""
+    empty = {"available": False, "title": "", "fields": [], "fragment_page": ""}
+    if not html or not html.strip():
+        return empty
+    soup = BeautifulSoup(html, "lxml")
+    title = ""
+    h1 = soup.select_one(".hero h1") or soup.find("h1")
+    if h1:
+        title = text_of(h1)
+    if not title:
+        title_el = soup.find("title")
+        title = text_of(title_el) if title_el else ""
+
+    fields = _fields_from_doc_meta(soup)
+
+    work = BeautifulSoup(html, "lxml")
+    for tag in work.find_all("script"):
+        tag.decompose()
+    for el in work.select(".toolbar, .kpi-row"):
+        el.decompose()
+    for el in list(work.select("article.case")):
+        el.decompose()
+    for el in list(work.select(".case")):
+        if el.find_parent(class_=["skip-sum", "meta", "hero", "card", "summary", "pending"]):
+            continue
+        el.decompose()
+    for table in list(work.find_all("table")):
+        if _is_case_list_table(table):
+            table.decompose()
+
+    body = work.body or work
+    section_html = body.decode_contents() if hasattr(body, "decode_contents") else str(body)
+    # Drop leftover empty wrappers that only contained the case list
+    section_html = section_html.strip()
+    text_probe = text_of(body)
+    if not text_probe and not fields:
+        return {**empty, "title": title}
+
+    fragment_page = build_fragment_page(
+        section_html,
+        extract_style_text(soup),
+        title=title or "用例信息",
+    )
+    available = bool(fields or (fragment_page and text_probe))
+    return {
+        "available": available,
+        "title": title,
+        "fields": fields,
+        "fragment_page": fragment_page if available else "",
+    }
+
+
+def _header_meta_kind(label: str) -> str | None:
+    text = _normalize_meta_label(label)
+    if not text:
+        return None
+    if text.startswith("分支"):
+        return "branch"
+    if text == "仓库" or (text.startswith("仓库") and "分支" not in text):
+        return "repo"
+    if text == "参与人" or text.startswith("参与人"):
+        return "participants"
+    return None
+
+
+def _iter_preamble_roots(soup: BeautifulSoup) -> list[Tag]:
+    roots: list[Tag] = []
+    for sel in (".hero", ".meta"):
+        for el in soup.select(sel):
+            roots.append(el)
+    # Intro content before the first case section, so case-body mentions are ignored
+    body = soup.body or soup
+    wrap = soup.select_one(".wrap") or body
+    for child in list(wrap.children):
+        if not getattr(child, "name", None):
+            continue
+        classes = child.get("class") or []
+        if child.name in {"section", "article"} and (
+            "case" in classes or (child.get("id") or "").lower().startswith("case")
+        ):
+            break
+        if "case" in classes and child.name in {"section", "article", "div"}:
+            break
+        if child in roots:
+            continue
+        roots.append(child)
+    return roots
+
+
+def _collect_header_pairs(root: Tag) -> list[tuple[str, str]]:
+    pairs: list[tuple[str, str]] = []
+    # tables (typical GMA .meta)
+    for tr in root.find_all("tr"):
+        # skip rows inside a later case if root is a large wrap — callers pass preamble only
+        if tr.find_parent(class_="case"):
+            continue
+        cells = tr.find_all(["th", "td"])
+        if len(cells) >= 2:
+            pairs.append((text_of(cells[0]), text_of(cells[1])))
+    # <p><strong>仓库</strong>：...
+    for node in root.find_all(["p", "div", "li"]):
+        if node.find_parent(class_="case"):
+            continue
+        if node.find("table") or node.find_parent("table"):
+            continue
+        label_el = node.find(["b", "strong"], recursive=False)
+        if label_el is None:
+            continue
+        labeled_kids = [
+            child
+            for child in node.find_all(["p", "div"], recursive=False)
+            if child.find(["b", "strong"], recursive=False)
+        ]
+        if labeled_kids:
+            continue
+        pairs.append((text_of(label_el), _value_after_label(node, label_el)))
+    return pairs
+
+
+def extract_report_header_meta(html: str) -> dict:
+    """Parse 仓库 / 分支 / 参与人 from a review report header. Never invent values."""
+    empty = {"repo": "", "branch": "", "participants": ""}
+    if not html or not html.strip():
+        return dict(empty)
+    soup = BeautifulSoup(html, "lxml")
+    found = dict(empty)
+    # Prefer .meta (table rows or <p><strong>…</strong> lines), then other preamble
+    roots: list[Tag] = []
+    roots.extend(soup.select(".meta"))
+    for root in _iter_preamble_roots(soup):
+        if root not in roots:
+            roots.append(root)
+    for root in roots:
+        for label, value in _collect_header_pairs(root):
+            kind = _header_meta_kind(label)
+            if not kind:
+                continue
+            val = re.sub(r"\s+", " ", value or "").strip()
+            if val and not found[kind]:
+                found[kind] = val
+        if found["repo"] and found["branch"] and found["participants"]:
+            break
+    return found
