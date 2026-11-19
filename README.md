@@ -44,14 +44,16 @@ uvicorn app.main:app --host 127.0.0.1 --port 8080
 
 ## Docker 部署
 
-镜像已包含前端构建产物和当前库内的用例/报告数据。GitHub 对单文件限制 100MB，镜像 tar 放在 [Releases](https://github.com/grokbot-used/test_platform/releases) 中下载。
+镜像已包含前端构建产物和当前库内的用例/报告数据。GitHub 对单文件限制 100MB，镜像 tar 不进 git，从 Release [v0.1.1](https://github.com/grokbot-used/test_platform/releases/tag/v0.1.1) 下载 `test_platform-0.1.1.tar`。v0.1.0 仍是改版前的界面。
 
 ```bash
 # 加载镜像
-docker load -i test_platform-0.1.0.tar
+docker load -i test_platform-0.1.1.tar
 
 # 启动（本机 8080）
-docker run --rm -p 8080:8080 test_platform:0.1.0
+docker run --rm -p 8080:8080 test_platform:0.1.1
 ```
+
+压缩包同样可以加载：`docker load -i test_platform-0.1.1.tar.gz`。
 
 浏览器打开 <http://127.0.0.1:8080>。也可用仓库里的 `docker-compose.yml` 在有 Dockerfile 和数据的情况下重新构建：`docker compose up --build`。

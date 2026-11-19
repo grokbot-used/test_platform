@@ -38,8 +38,9 @@
           </select>
         </label>
         <label>搜索
-          <input v-model="qInput" type="search" placeholder="搜索编号 / 标题" />
+          <input v-model="qInput" type="search" placeholder="编号 / 标题 / 字符" />
         </label>
+        <button class="btn-export" type="button" @click="exportTable">导出表格</button>
         <label>每页
           <select v-model.number="pageSize" @change="onPageSizeChange">
             <option :value="20">20</option>
@@ -47,7 +48,6 @@
             <option :value="100">100</option>
           </select>
         </label>
-        <button class="btn-export" type="button" @click="exportTable">导出表格</button>
         <span class="stats">第 {{ rangeStart }}–{{ rangeEnd }} 条 / 共 {{ doc.total || 0 }} 条</span>
       </div>
 
@@ -66,7 +66,7 @@
           <header class="case-hd">
             <span class="num">{{ c.seq || c.key }}</span>
             <span v-if="c.priority" class="tag" :class="'tag-' + (c.priority || '').toLowerCase()">{{ c.priority }}</span>
-            <span class="case-title">{{ c.title || c.description || c.key }}</span>
+            <span class="case-title">{{ c.description || c.title || c.key }}</span>
           </header>
           <div class="case-meta">
             <div><span class="k">业务端</span><span class="v">{{ c.client || "—" }}</span></div>
