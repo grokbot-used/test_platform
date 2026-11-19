@@ -1,0 +1,16 @@
+.git
+.venv
+**/__pycache__
+**/*.pyc
+**/*.pyo
+node_modules
+frontend/node_modules
+frontend/src
+qa
+*.log
+data/platform.db-shm
+data/platform.db-wal
+data/platform.db-journal
+.DS_Store
+.idea
+.vscode

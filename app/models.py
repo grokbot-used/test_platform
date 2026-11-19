@@ -1,0 +1,109 @@
+from datetime import datetime
+
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.db import Base
+
+
+class Product(Base):
+    __tablename__ = "products"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    slug: Mapped[str] = mapped_column(String(80), unique=True, nullable=False)
+
+    cases: Mapped[list["TestCase"]] = relationship(back_populates="product")
+    reports: Mapped[list["Report"]] = relationship(back_populates="product")
+
+
+class TestCase(Base):
+    __tablename__ = "test_cases"
+    __table_args__ = (UniqueConstraint("product_id", "key", name="uq_case_product_key"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), nullable=False, index=True)
+    key: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    latest_version: Mapped[str] = mapped_column(String(32), default="v1.0.0")
+
+    product: Mapped[Product] = relationship(back_populates="cases")
+    versions: Mapped[list["TestCaseVersion"]] = relationship(
+        back_populates="case", cascade="all, delete-orphan", order_by="TestCaseVersion.created_at"
+    )
+
+
+class TestCaseVersion(Base):
+    __tablename__ = "test_case_versions"
+    __table_args__ = (UniqueConstraint("case_id", "version", name="uq_case_version"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    case_id: Mapped[int] = mapped_column(ForeignKey("test_cases.id"), nullable=False, index=True)
+    version: Mapped[str] = mapped_column(String(32), nullable=False)
+    title: Mapped[str] = mapped_column(String(500), default="")
+    module: Mapped[str] = mapped_column(String(200), default="")
+    priority: Mapped[str] = mapped_column(String(16), default="")
+    client: Mapped[str] = mapped_column(String(32), default="")
+    description: Mapped[str] = mapped_column(Text, default="")
+    preconditions: Mapped[str] = mapped_column(Text, default="")
+    steps: Mapped[str] = mapped_column(Text, default="")
+    expected: Mapped[str] = mapped_column(Text, default="")
+    source_file: Mapped[str] = mapped_column(String(500), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    case: Mapped[TestCase] = relationship(back_populates="versions")
+
+
+class Report(Base):
+    __tablename__ = "reports"
+    __table_args__ = (UniqueConstraint("product_id", "title", "type", name="uq_report_identity"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(300), nullable=False)
+    type: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    latest_version: Mapped[str] = mapped_column(String(32), default="v1.0.0")
+
+    product: Mapped[Product] = relationship(back_populates="reports")
+    versions: Mapped[list["ReportVersion"]] = relationship(
+        back_populates="report", cascade="all, delete-orphan", order_by="ReportVersion.created_at"
+    )
+
+
+class ReportVersion(Base):
+    __tablename__ = "report_versions"
+    __table_args__ = (UniqueConstraint("report_id", "version", name="uq_report_version"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    report_id: Mapped[int] = mapped_column(ForeignKey("reports.id"), nullable=False, index=True)
+    version: Mapped[str] = mapped_column(String(32), nullable=False)
+    summary: Mapped[str] = mapped_column(Text, default="")
+    conclusion: Mapped[str] = mapped_column(Text, default="")
+    source_file: Mapped[str] = mapped_column(String(500), default="")
+    based_on_case_version: Mapped[str | None] = mapped_column(String(32), nullable=True, default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    report: Mapped[Report] = relationship(back_populates="versions")
+    links: Mapped[list["ReportCaseLink"]] = relationship(
+        back_populates="report_version", cascade="all, delete-orphan"
+    )
+
+
+class ReportCaseLink(Base):
+    __tablename__ = "report_case_links"
+    __table_args__ = (
+        UniqueConstraint("report_version_id", "case_id", name="uq_link_report_case"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    report_version_id: Mapped[int] = mapped_column(
+        ForeignKey("report_versions.id"), nullable=False, index=True
+    )
+    case_id: Mapped[int] = mapped_column(ForeignKey("test_cases.id"), nullable=False, index=True)
+    case_version_id: Mapped[int | None] = mapped_column(
+        ForeignKey("test_case_versions.id"), nullable=True
+    )
+    result: Mapped[str] = mapped_column(String(24), default="")
+
+    report_version: Mapped[ReportVersion] = relationship(back_populates="links")
+    case: Mapped[TestCase] = relationship()
+    case_version: Mapped[TestCaseVersion | None] = relationship()
