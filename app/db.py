@@ -50,3 +50,30 @@ def migrate_schema():
             conn.execute(
                 text("ALTER TABLE report_versions ADD COLUMN based_on_case_version VARCHAR(32)")
             )
+        version_adds = {
+            "repo": "VARCHAR(1000) DEFAULT ''",
+            "branch": "TEXT DEFAULT ''",
+            "participants": "TEXT DEFAULT ''",
+            "style_css": "TEXT DEFAULT ''",
+            "header_parsed": "INTEGER DEFAULT 0",
+            "details_parsed": "INTEGER DEFAULT 0",
+            "source_size": "INTEGER DEFAULT 0",
+            "source_mtime_ns": "INTEGER DEFAULT 0",
+        }
+        if cols:
+            for name, decl in version_adds.items():
+                if name not in cols:
+                    conn.execute(text(f"ALTER TABLE report_versions ADD COLUMN {name} {decl}"))
+        link_cols = [row[1] for row in conn.execute(text("PRAGMA table_info(report_case_links)"))]
+        link_adds = {
+            "heading": "TEXT DEFAULT ''",
+            "anchor": "VARCHAR(200) DEFAULT ''",
+            "section_html": "TEXT DEFAULT ''",
+            "fields_json": "TEXT DEFAULT '[]'",
+            "detail_text": "TEXT DEFAULT ''",
+            "detail_parsed": "INTEGER DEFAULT 0",
+        }
+        if link_cols:
+            for name, decl in link_adds.items():
+                if name not in link_cols:
+                    conn.execute(text(f"ALTER TABLE report_case_links ADD COLUMN {name} {decl}"))

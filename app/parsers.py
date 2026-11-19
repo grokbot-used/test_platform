@@ -761,6 +761,178 @@ def _block_matches_key(el: Tag, key: str, aliases: list[str]) -> bool:
     return False
 
 
+
+_STYLE_TAG_RE = re.compile(r"<style\b[^>]*>(.*?)</style>", re.I | re.S)
+_CASE_START_RE = re.compile(
+    r"<(?:section|article|div)\b(?=[^>]*\b(?:class|id)\s*=)[^>]*?"
+    r"(?:class\s*=\s*([\"'])[^\"']*\bcase\b[^\"']*\1"
+    r"|id\s*=\s*([\"'])case[-_][^\"']*\2)[^>]*>",
+    re.I,
+)
+_OPEN_TAG_RE = re.compile(r"<([A-Za-z][A-Za-z0-9:-]*)\b", re.S)
+_CLOSE_TAG_RE = re.compile(r"</([A-Za-z][A-Za-z0-9:-]*)\s*>", re.I)
+_ANY_OPEN_RE = re.compile(r"<([A-Za-z][A-Za-z0-9:-]*)\b[^>]*>", re.S)
+_ID_ATTR_RE = re.compile(
+    r"""\sid\s*=\s*(['"])([^"']+)\1""",
+    re.I,
+)
+
+
+def extract_style_text_from_raw(html: str) -> str:
+    """Collect <style> blocks without parsing the whole document."""
+    if not html:
+        return ""
+    parts = [m.group(1) for m in _STYLE_TAG_RE.finditer(html)]
+    return "\n\n".join(p for p in parts if p and p.strip())
+
+
+def _slice_preamble_html(html: str) -> str:
+    """HTML before the first case section; header meta lives here."""
+    if not html:
+        return ""
+    m = _CASE_START_RE.search(html)
+    if m:
+        return html[: m.start()]
+    # Large reports without a recognizable case still have the header at the top.
+    return html if len(html) <= 262144 else html[:262144]
+
+
+def _element_span(html: str, start: int) -> tuple[int, int] | None:
+    """Return [start, end) of the element whose opening '<' is at start."""
+    if start < 0 or start >= len(html) or html[start] != "<":
+        return None
+    opened = _OPEN_TAG_RE.match(html, start)
+    if not opened:
+        return None
+    name = opened.group(1).lower()
+    gt = html.find(">", opened.end())
+    if gt < 0:
+        return None
+    if html[gt - 1] == "/":
+        return (start, gt + 1)
+    depth = 1
+    i = gt + 1
+    n = len(html)
+    raw_close = f"</{name}"
+    while i < n:
+        lt = html.find("<", i)
+        if lt < 0:
+            return None
+        if html.startswith("<!--", lt):
+            end = html.find("-->", lt + 4)
+            if end < 0:
+                return None
+            i = end + 3
+            continue
+        closer = _CLOSE_TAG_RE.match(html, lt)
+        if closer:
+            if closer.group(1).lower() == name:
+                depth -= 1
+                if depth == 0:
+                    return (start, closer.end())
+            i = closer.end()
+            continue
+        opener = _ANY_OPEN_RE.match(html, lt)
+        if not opener:
+            i = lt + 1
+            continue
+        tname = opener.group(1).lower()
+        raw = opener.group(0)
+        if tname in {"script", "style", "textarea"}:
+            m_end = re.search(rf"</{re.escape(tname)}\s*>", html[opener.end() :], re.I)
+            if not m_end:
+                return None
+            i = opener.end() + m_end.end()
+            continue
+        if tname == name and not raw.rstrip().endswith("/>") and not raw.endswith("/>"):
+            depth += 1
+        i = opener.end()
+    return None
+
+
+def _find_id_tag_start(html: str, ident: str) -> int:
+    pat = re.compile(
+        rf"""(?is)<(?=[^>]*\sid\s*=\s*(['\"]){re.escape(ident)}\1)[A-Za-z][A-Za-z0-9:-]*\b[^>]*>"""
+    )
+    m = pat.search(html)
+    return m.start() if m else -1
+
+
+def _slice_case_section_html(html: str, case_key: str) -> str:
+    """Cut out the single case element by id so we do not parse the whole report."""
+    if not html or not case_key:
+        return ""
+    for ident in key_lookup_aliases(case_key):
+        start = _find_id_tag_start(html, ident)
+        if start < 0:
+            continue
+        span = _element_span(html, start)
+        if span:
+            return html[span[0] : span[1]]
+    return ""
+
+
+def _iter_case_section_html(html: str):
+    """Yield raw HTML for each top-level case section."""
+    if not html:
+        return
+    last_end = 0
+    for m in _CASE_START_RE.finditer(html):
+        if m.start() < last_end:
+            continue
+        span = _element_span(html, m.start())
+        if not span:
+            continue
+        last_end = span[1]
+        yield html[span[0] : span[1]]
+
+
+def _finalize_case_detail(found: Tag, css: str, case_key: str) -> dict:
+    _rewrite_case_heading(found)
+    _strip_review_chrome_fields(found)
+    heading = ""
+    h = found.find(["h2", "h3", "h4", "header"])
+    if h:
+        heading = text_of(h)
+    result = extract_result(found)
+    anchor = found.get("id") or ""
+    section_html = _outer_fragment(found)
+    return {
+        "found": True,
+        "anchor": anchor,
+        "html": section_html,
+        "fragment_page": build_fragment_page(section_html, css, title=heading or case_key),
+        "text": text_of(found),
+        "fields": _fields_from_case_block(found),
+        "result": result,
+        "heading": heading,
+    }
+
+
+def index_report_case_details(html: str, key_prefix: str | None = None) -> dict:
+    """Parse header, CSS, and every case section once for persistence."""
+    header = extract_report_header_meta(html)
+    css = extract_style_text_from_raw(html)
+    cases: list[dict] = []
+    seen: set[str] = set()
+    for raw in _iter_case_section_html(html):
+        soup = BeautifulSoup(raw, "lxml")
+        found = soup.select_one("section.case, article.case, div.case, .case")
+        if found is None:
+            found = soup.find(True)
+        if found is None:
+            continue
+        key = _heading_key(found, key_prefix)
+        detail = _finalize_case_detail(found, css, key or "")
+        if key:
+            if key in seen:
+                continue
+            seen.add(key)
+        detail["key"] = key or ""
+        cases.append(detail)
+    return {"header": header, "css": css, "cases": cases}
+
+
 def extract_report_case_detail(html: str, case_key: str) -> dict:
     """Pull the per-case section out of a review HTML report."""
     empty = {
@@ -775,7 +947,8 @@ def extract_report_case_detail(html: str, case_key: str) -> dict:
     }
     if not html or not case_key:
         return empty
-    soup = BeautifulSoup(html, "lxml")
+    sliced = _slice_case_section_html(html, case_key)
+    soup = BeautifulSoup(sliced or html, "lxml")
     aliases = key_lookup_aliases(case_key)
 
     found: Tag | None = None
@@ -806,29 +979,8 @@ def extract_report_case_detail(html: str, case_key: str) -> dict:
     if found is None:
         return empty
 
-    _rewrite_case_heading(found)
-    _strip_review_chrome_fields(found)
-    heading = ""
-    h = found.find(["h2", "h3", "h4", "header"])
-    if h:
-        heading = text_of(h)
-    result = extract_result(found)
-    anchor = found.get("id") or ""
-    section_html = _outer_fragment(found)
-    return {
-        "found": True,
-        "anchor": anchor,
-        "html": section_html,
-        "fragment_page": build_fragment_page(
-            section_html,
-            extract_style_text(soup),
-            title=heading or case_key,
-        ),
-        "text": text_of(found),
-        "fields": _fields_from_case_block(found),
-        "result": result,
-        "heading": heading,
-    }
+    css = extract_style_text_from_raw(html) if sliced else extract_style_text(soup)
+    return _finalize_case_detail(found, css, case_key)
 
 
 def detect_app_platforms(text: str, title: str = "", filename: str = "") -> list[str]:
@@ -869,11 +1021,25 @@ def is_app_review(title: str = "", filename: str = "", typ: str = "") -> bool:
 
 # ---- case document preamble / priority stats / report header meta ----
 
-DROPPED_REVIEW_LABELS = {
+# Rows kept in the review-detail table only; heading/chrome outside the table is unchanged.
+KEPT_REVIEW_LABELS = {
     "推演用例编号",
+    "编号",
     "用例标题",
     "标题",
-    "问题级别",
+    "推演链路",
+    "前端链路",
+    "后端链路",
+    "APP链路",
+    "安卓链路",
+    "iOS链路",
+    "ios链路",
+    "推演结果",
+    "不通过原因",
+    "不通过/跳过原因",
+    "跳过原因",
+    "备注",
+    "备注/证据",
 }
 
 _HEADING_SEQ_RE = re.compile(
@@ -934,13 +1100,21 @@ def _normalize_meta_label(label: str) -> str:
     return re.sub(r"\s+", " ", (label or "").strip()).rstrip("：:").strip()
 
 
-def _is_dropped_review_label(label: str) -> bool:
+def _is_kept_review_label(label: str) -> bool:
     text = _normalize_meta_label(label)
     if not text:
         return False
-    if text in DROPPED_REVIEW_LABELS:
+    if text in KEPT_REVIEW_LABELS:
         return True
-    return any(text.startswith(prefix) for prefix in ("推演用例编号", "用例标题", "问题级别"))
+    if text.startswith("推演用例编号") or text.startswith("用例标题"):
+        return True
+    if text.startswith("链路推演"):
+        return True
+    if text.startswith("不通过原因") or text.startswith("不通过/跳过原因"):
+        return True
+    if text.startswith("备注"):
+        return True
+    return False
 
 
 def _format_heading_seq(text: str) -> str:
@@ -990,12 +1164,12 @@ def _strip_review_chrome_fields(el: Tag) -> None:
             cells = tr.find_all(["th", "td"])
         if not cells:
             continue
-        if _is_dropped_review_label(text_of(cells[0])):
+        if not _is_kept_review_label(text_of(cells[0])):
             tr.decompose()
     for field in list(el.select(".field")):
         k = field.select_one(".k") or field.find(["dt", "th", "strong", "b"])
         label = text_of(k) if k else ""
-        if _is_dropped_review_label(label):
+        if label and not _is_kept_review_label(label):
             field.decompose()
     for table in list(el.find_all("table")):
         if not table.find("tr"):
@@ -1194,7 +1368,7 @@ def extract_report_header_meta(html: str) -> dict:
     empty = {"repo": "", "branch": "", "participants": ""}
     if not html or not html.strip():
         return dict(empty)
-    soup = BeautifulSoup(html, "lxml")
+    soup = BeautifulSoup(_slice_preamble_html(html), "lxml")
     found = dict(empty)
     # Prefer .meta (table rows or <p><strong>…</strong> lines), then other preamble
     roots: list[Tag] = []

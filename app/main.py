@@ -58,7 +58,10 @@ REPORT_TYPE_LABELS = {
 def _startup():
     init_db()
     FILES_DIR.mkdir(parents=True, exist_ok=True)
+    import threading
+
     from app.db import SessionLocal
+    from app.review_store import backfill_review_details_async
     from app.reviews import backfill_based_on_case_versions
 
     db = SessionLocal()
@@ -66,6 +69,7 @@ def _startup():
         backfill_based_on_case_versions(db)
     finally:
         db.close()
+    threading.Thread(target=backfill_review_details_async, name="review-detail-backfill", daemon=True).start()
 
 
 def version_sort(values: list[str]) -> list[str]:
@@ -859,6 +863,9 @@ async def import_reports(
     )
     n = link_cases(db, product, rv, parsed.get("links") or [])
     db.commit()
+    from app.review_store import persist_report_version_details
+
+    persist_report_version_details(db, rv, product, html=raw)
     return {
         "report_id": rv.report_id,
         "version": ver,

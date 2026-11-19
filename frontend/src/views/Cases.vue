@@ -15,6 +15,7 @@
               <option v-for="p in products" :key="p.id" :value="String(p.id)">{{ p.name }}</option>
             </select>
           </label>
+          <button class="btn-export" type="button" @click="openCaseInfo">用例信息</button>
           <label>用例版本
             <select v-model="caseVersion" :disabled="!versions.length" @change="onVersionChange">
               <option v-for="v in versions" :key="v" :value="v">{{ v }}</option>
@@ -61,7 +62,6 @@
           <input v-model="qInput" type="search" placeholder="编号 / 标题 / 字符" />
         </label>
         <button class="btn-export" type="button" @click="exportTable">导出表格</button>
-        <button class="btn-export" type="button" @click="openCaseInfo">用例信息</button>
         <label>每页
           <select v-model.number="pageSize" @change="onPageSizeChange">
             <option :value="20">20</option>
@@ -69,6 +69,11 @@
             <option :value="100">100</option>
           </select>
         </label>
+        <div v-if="!loading && (doc.total || 0) > 0" class="pager toolbar-pager">
+          <button type="button" :disabled="page <= 1" @click="goPage(page - 1)">上一页</button>
+          <span>第 {{ page }} / {{ pageCount }} 页</span>
+          <button type="button" :disabled="page >= pageCount" @click="goPage(page + 1)">下一页</button>
+        </div>
         <span class="stats">第 {{ rangeStart }}–{{ rangeEnd }} 条 / 共 {{ doc.total || 0 }} 条</span>
       </div>
 
@@ -126,11 +131,6 @@
         </aside>
       </article>
 
-      <div v-if="!loading && (doc.total || 0) > 0" class="pager">
-        <button type="button" :disabled="page <= 1" @click="goPage(page - 1)">上一页</button>
-        <span>第 {{ page }} / {{ pageCount }} 页</span>
-        <button type="button" :disabled="page >= pageCount" @click="goPage(page + 1)">下一页</button>
-      </div>
     </div>
 
     <div v-if="modal.open" class="review-mask" @click.self="closeModal">

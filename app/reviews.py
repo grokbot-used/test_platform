@@ -284,36 +284,42 @@ def review_detail(
         base["message"] = f"当前用例版本 {case_version} 暂无{ENDPOINT_LABELS[endpoint]}推演结果"
         return base
 
+    src = rv.source_file or ""
+    if src:
+        base["preview_url"] = f"/api/report-versions/{rv.id}/preview"
+
+    from app.review_store import payload_from_link, persist_one_case_detail
+
+    persist_one_case_detail(db, rv, case)
+    db.refresh(rv)
     link = _link_for(db, rv, case.id)
+
+    if rv.header_parsed:
+        base["repo"] = rv.repo or ""
+        base["branch"] = rv.branch or ""
+        base["participants"] = rv.participants or ""
+
     if link:
         base["result"] = link.result or ""
         base["result_label"] = RESULT_LABELS.get(link.result or "", link.result or "未记录")
-
-    src = rv.source_file or ""
-    ext = Path(src).suffix.lower()
-    if src:
-        base["preview_url"] = f"/api/report-versions/{rv.id}/preview"
-    html = _read_source(src) if ext in {".html", ".htm"} else ""
-    if html:
-        header_meta = extract_report_header_meta(html)
-        base.update(header_meta)
-        detail = extract_report_case_detail(html, case.key)
-        base.update(
-            {
-                "found": detail["found"],
-                "anchor": detail["anchor"],
-                "html": detail.get("html") or "",
-                "fragment_page": detail.get("fragment_page") or "",
-                "text": detail["text"],
-                "fields": detail["fields"],
-                "heading": detail["heading"],
-            }
-        )
-        if detail["result"] and not base["result"]:
-            base["result"] = detail["result"]
-            base["result_label"] = RESULT_LABELS.get(detail["result"], detail["result"])
-        if detail["anchor"]:
-            base["preview_url"] = f"/api/report-versions/{rv.id}/preview#{detail['anchor']}"
+        if link.detail_parsed:
+            detail = payload_from_link(link, rv.style_css or "", case.key)
+            base.update(
+                {
+                    "found": detail["found"],
+                    "anchor": detail["anchor"],
+                    "html": detail.get("html") or "",
+                    "fragment_page": detail.get("fragment_page") or "",
+                    "text": detail["text"],
+                    "fields": detail["fields"],
+                    "heading": detail["heading"],
+                }
+            )
+            if detail["result"] and not base["result"]:
+                base["result"] = detail["result"]
+                base["result_label"] = RESULT_LABELS.get(detail["result"], detail["result"])
+            if detail["anchor"]:
+                base["preview_url"] = f"/api/report-versions/{rv.id}/preview#{detail['anchor']}"
 
     if not base["found"]:
         title = rv.report.title if rv.report else "推演报告"

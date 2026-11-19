@@ -27,9 +27,9 @@ uvicorn app.main:app --host 127.0.0.1 --port 8080
 
 ## 数据说明
 
-- 数据库：`data/platform.db`（SQLite），只存元数据与路径。
-- 原始 HTML / Markdown 放在 `data/files/`，不要把整份大 HTML 塞进数据库。
-- 种子源文件在 `data/sources/`，运行时不依赖仓库外的目录。`app.seed` 会先把正式文件拷贝到此处再入库。
+- 数据库：`data/platform.db`（SQLite），存用例/报告元数据与关联结论，以及推演详情表格字段（编号、标题、链路、结果、原因、备注）和报告页头（仓库、分支、参与人、样式）。
+- 原始 HTML / Markdown 仍放在 `data/files/`。导入或启动时解析一次写入数据库，之后 `/api/review-detail` 按用例读库，不再每次全量解析报告。
+- 种子源文件在 `data/sources/`，运行时不依赖仓库外的目录。`app.seed` 会先把正式文件拷贝到此处再入库，并回填推演详情。
 - `data/` 下的源文件与数据库默认不进入 git（部分报告超过 4MB）。重新部署时在本机准备好 `data/sources` 后执行 `python -m app.seed`。
 
 种子默认会重建数据库。重复运行是安全的，但会清空手工新增的数据。
@@ -44,16 +44,14 @@ uvicorn app.main:app --host 127.0.0.1 --port 8080
 
 ## Docker 部署
 
-镜像已包含前端构建产物和当前库内的用例/报告数据。GitHub 对单文件限制 100MB，镜像 tar 不进 git，从 Release [v0.1.2](https://github.com/grokbot-used/test_platform/releases/tag/v0.1.2) 下载 `test_platform-0.1.2.tar`。v0.1.0 与 v0.1.1 仍是更早的界面。
+镜像已包含前端构建产物和当前库内的用例/报告数据。GitHub 对单文件限制 100MB，镜像 tar 放在 [Releases](https://github.com/grokbot-used/test_platform/releases) 中下载。
 
 ```bash
 # 加载镜像
-docker load -i test_platform-0.1.2.tar
+docker load -i test_platform-0.1.3.tar
 
 # 启动（本机 8080）
-docker run --rm -p 8080:8080 test_platform:0.1.2
+docker run --rm -p 8080:8080 test_platform:0.1.3
 ```
-
-压缩包同样可以加载：`docker load -i test_platform-0.1.2.tar.gz`。
 
 浏览器打开 <http://127.0.0.1:8080>。也可用仓库里的 `docker-compose.yml` 在有 Dockerfile 和数据的情况下重新构建：`docker compose up --build`。

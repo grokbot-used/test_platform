@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -80,6 +80,14 @@ class ReportVersion(Base):
     conclusion: Mapped[str] = mapped_column(Text, default="")
     source_file: Mapped[str] = mapped_column(String(500), default="")
     based_on_case_version: Mapped[str | None] = mapped_column(String(32), nullable=True, default=None)
+    repo: Mapped[str] = mapped_column(String(1000), default="")
+    branch: Mapped[str] = mapped_column(Text, default="")
+    participants: Mapped[str] = mapped_column(Text, default="")
+    style_css: Mapped[str] = mapped_column(Text, default="")
+    header_parsed: Mapped[int] = mapped_column(Integer, default=0)
+    details_parsed: Mapped[int] = mapped_column(Integer, default=0)
+    source_size: Mapped[int] = mapped_column(Integer, default=0)
+    source_mtime_ns: Mapped[int] = mapped_column(BigInteger, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     report: Mapped[Report] = relationship(back_populates="versions")
@@ -103,6 +111,12 @@ class ReportCaseLink(Base):
         ForeignKey("test_case_versions.id"), nullable=True
     )
     result: Mapped[str] = mapped_column(String(24), default="")
+    heading: Mapped[str] = mapped_column(Text, default="")
+    anchor: Mapped[str] = mapped_column(String(200), default="")
+    section_html: Mapped[str] = mapped_column(Text, default="")
+    fields_json: Mapped[str] = mapped_column(Text, default="[]")
+    detail_text: Mapped[str] = mapped_column(Text, default="")
+    detail_parsed: Mapped[int] = mapped_column(Integer, default=0)
 
     report_version: Mapped[ReportVersion] = relationship(back_populates="links")
     case: Mapped[TestCase] = relationship()
