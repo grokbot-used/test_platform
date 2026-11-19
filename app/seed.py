@@ -446,8 +446,10 @@ def seed(reset: bool = True) -> dict:
             stats["spot_link"] = "NONE"
 
         from app.review_store import backfill_review_details
+        from app.case_doc_store import backfill_case_doc_metas
 
         stats["review_details"] = backfill_review_details(db)
+        stats["case_docs"] = backfill_case_doc_metas(db)
     finally:
         db.close()
     return stats

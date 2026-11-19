@@ -1,29 +1,18 @@
-# Local environments
 .venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
 node_modules/
-frontend/node_modules/
-
-# Built frontend is served from the image; rebuild with npm run build
 frontend/dist/
-
-# Case/report data is baked into the image. Some report HTML files are large
-# and must stay out of git (GitHub file limit).
-data/
-
-# Prebuilt image tarballs are published as GitHub Release assets
-*.tar
-*.tar.gz
-
-# Python / SQLite sidecars
-**/__pycache__/
-**/*.pyc
-**/*.pyo
-*.db-shm
-*.db-wal
-*.db-journal
-
-# Editor / OS
+data/platform.db
+data/platform.db-journal
+data/platform.db-shm
+data/platform.db-wal
+data/files/
+data/sources/
 .DS_Store
+*.log
 .idea/
 .vscode/
-*.log

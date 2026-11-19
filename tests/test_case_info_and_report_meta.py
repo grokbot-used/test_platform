@@ -82,12 +82,13 @@ def test_gma_backend_report_header_and_fragment_cleanup():
     assert detail["heading"].startswith("#1")
     assert not detail["heading"].startswith("1")
     labels = [f["label"] for f in detail["fields"]]
-    assert labels == ["推演用例编号", "用例标题", "后端链路", "推演结果", "不通过原因", "备注"]
+    assert labels == ["后端链路", "推演结果", "不通过原因", "备注"]
     frag = detail["html"]
     assert "问题级别" not in labels
     assert "问题级别" not in frag
-    assert "推演用例编号" in frag
-    assert "用例标题" in frag
+    assert "推演用例编号" not in frag
+    assert "用例标题" not in frag
+    assert "标题" not in labels
     # heading outside the table stays #N
     assert "<h3>#1" in frag or ">#1" in frag
 

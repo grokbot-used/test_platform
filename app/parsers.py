@@ -1023,10 +1023,6 @@ def is_app_review(title: str = "", filename: str = "", typ: str = "") -> bool:
 
 # Rows kept in the review-detail table only; heading/chrome outside the table is unchanged.
 KEPT_REVIEW_LABELS = {
-    "推演用例编号",
-    "编号",
-    "用例标题",
-    "标题",
     "推演链路",
     "前端链路",
     "后端链路",
@@ -1106,8 +1102,6 @@ def _is_kept_review_label(label: str) -> bool:
         return False
     if text in KEPT_REVIEW_LABELS:
         return True
-    if text.startswith("推演用例编号") or text.startswith("用例标题"):
-        return True
     if text.startswith("链路推演"):
         return True
     if text.startswith("不通过原因") or text.startswith("不通过/跳过原因"):
@@ -1174,6 +1168,26 @@ def _strip_review_chrome_fields(el: Tag) -> None:
     for table in list(el.find_all("table")):
         if not table.find("tr"):
             table.decompose()
+
+
+def apply_review_table_keep_list(section_html: str, fields: list | None = None) -> tuple[str, list]:
+    """Re-apply the in-table keep-list to stored HTML/fields (heading/chrome unchanged)."""
+    kept_fields = [
+        item
+        for item in (fields or [])
+        if isinstance(item, dict) and _is_kept_review_label(str(item.get("label") or ""))
+    ]
+    html = section_html or ""
+    if not html.strip():
+        return html, kept_fields
+    soup = BeautifulSoup(html, "lxml")
+    root = soup.body or soup
+    _strip_review_chrome_fields(root)
+    if soup.body:
+        html = soup.body.decode_contents()
+    else:
+        html = str(soup)
+    return html.strip(), kept_fields
 
 
 def _value_after_label(node: Tag, label_el: Tag) -> str:

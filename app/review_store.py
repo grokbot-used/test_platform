@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.config import FILES_DIR
 from app.models import Product, Report, ReportCaseLink, ReportVersion, TestCase
 from app.parsers import (
+    apply_review_table_keep_list,
     build_fragment_page,
     extract_report_case_detail,
     extract_report_header_meta,
@@ -94,7 +95,7 @@ def payload_from_link(link: ReportCaseLink, css: str, case_key: str) -> dict:
         fields = json.loads(link.fields_json or "[]")
     except json.JSONDecodeError:
         fields = []
-    section_html = link.section_html or ""
+    section_html, fields = apply_review_table_keep_list(link.section_html or "", fields)
     heading = link.heading or ""
     return {
         "found": bool(section_html),

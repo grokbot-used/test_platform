@@ -1,5 +1,5 @@
 <template>
-  <div class="doc-page">
+  <div class="doc-page" :class="{ 'drawer-open': drawer.open }">
     <div class="doc-shell">
       <div class="doc-hero">
         <div class="hero-row">
@@ -69,10 +69,23 @@
             <option :value="100">100</option>
           </select>
         </label>
-        <div v-if="!loading && (doc.total || 0) > 0" class="pager toolbar-pager">
-          <button type="button" :disabled="page <= 1" @click="goPage(page - 1)">上一页</button>
-          <span>第 {{ page }} / {{ pageCount }} 页</span>
-          <button type="button" :disabled="page >= pageCount" @click="goPage(page + 1)">下一页</button>
+        <div v-if="(doc.total || 0) > 0" class="pager toolbar-pager">
+          <button type="button" :disabled="loading || page <= 1" @click="goPage(page - 1)">上一页</button>
+          <label class="page-jump">第
+            <input
+              v-model="pageInput"
+              type="number"
+              min="1"
+              :max="pageCount"
+              inputmode="numeric"
+              :disabled="loading"
+              aria-label="跳转到页码"
+              @keydown.enter.prevent="jumpToPage"
+              @blur="jumpToPage"
+            />
+            / {{ pageCount }} 页
+          </label>
+          <button type="button" :disabled="loading || page >= pageCount" @click="goPage(page + 1)">下一页</button>
         </div>
         <span class="stats">第 {{ rangeStart }}–{{ rangeEnd }} 条 / 共 {{ doc.total || 0 }} 条</span>
       </div>
@@ -128,48 +141,109 @@
             <span v-if="ep.available && ep.report_version" class="dock-ver">报告 {{ ep.report_version }}</span>
             <span v-else class="dock-ver">暂无报告</span>
           </button>
+          <button
+            type="button"
+            class="dock-btn comment-entry"
+            :class="{ ready: (c.comment_count || 0) > 0, active: isCommentOpen(c) }"
+            @click="openComments(c)"
+          >
+            <span class="dock-name">评论</span>
+            <span class="dock-result">评论</span>
+            <span class="dock-ver">{{ (c.comment_count || 0) > 0 ? c.comment_count + " 条" : "暂无" }}</span>
+          </button>
         </aside>
       </article>
 
     </div>
 
-    <div v-if="modal.open" class="review-mask" @click.self="closeModal">
-      <div class="review-modal" role="dialog" aria-modal="true" aria-labelledby="review-modal-title">
-        <header class="modal-hd">
-          <div class="modal-title-row">
+    <aside
+      v-if="drawer.open"
+      class="side-drawer"
+      role="dialog"
+      aria-modal="false"
+      :aria-labelledby="drawer.mode === 'comments' ? 'comment-drawer-title' : 'review-modal-title'"
+    >
+      <header class="modal-hd drawer-hd">
+        <div class="modal-title-row">
+          <template v-if="drawer.mode === 'comments'">
+            <h2 id="comment-drawer-title">评论 · {{ commentTitle }}</h2>
+          </template>
+          <template v-else>
             <h2 id="review-modal-title">{{ modalTitle }}</h2>
             <span
               v-if="modal.data?.result_label"
               class="tag"
               :class="'res-' + (modal.data.result || 'empty')"
             >{{ modal.data.result_label }}</span>
-          </div>
-          <button class="btn-close" type="button" @click="closeModal">关闭</button>
-        </header>
-        <div class="modal-body">
-          <p v-if="modal.loading" class="muted">正在加载…</p>
-          <p v-else-if="modal.error" class="err">{{ modal.error }}</p>
-          <template v-else-if="modal.data">
-            <div v-if="reviewSourceMeta.length" class="review-source-meta">
-              <div v-for="item in reviewSourceMeta" :key="item.label" class="review-source-item">
-                <span class="k">{{ item.label }}</span>
-                <span class="v">{{ item.value }}</span>
-              </div>
-            </div>
-            <iframe
-              v-if="fragmentPage"
-              class="review-frame review-srcdoc"
-              :srcdoc="fragmentPage"
-              sandbox="allow-same-origin allow-popups"
-              title="推演结果"
-            ></iframe>
-            <p v-else class="modal-msg">{{ emptyReviewMessage }}</p>
           </template>
         </div>
-      </div>
-    </div>
+        <button class="btn-close" type="button" @click="closeDrawer">关闭</button>
+      </header>
 
-    <div v-if="infoModal.open" class="review-mask" @click.self="closeCaseInfo">
+      <div v-if="drawer.mode === 'review'" class="drawer-body">
+        <p v-if="modal.loading" class="muted">正在加载…</p>
+        <p v-else-if="modal.error" class="err">{{ modal.error }}</p>
+        <template v-else-if="modal.data">
+          <div v-if="reviewSourceMeta.length" class="review-source-meta">
+            <div v-for="item in reviewSourceMeta" :key="item.label" class="review-source-item">
+              <span class="k">{{ item.label }}</span>
+              <span class="v">{{ item.value }}</span>
+            </div>
+          </div>
+          <iframe
+            v-if="fragmentPage"
+            class="review-frame review-srcdoc"
+            :srcdoc="fragmentPage"
+            sandbox="allow-same-origin allow-popups"
+            title="推演结果"
+          ></iframe>
+          <p v-else class="modal-msg">{{ emptyReviewMessage }}</p>
+        </template>
+      </div>
+
+      <div v-else class="comment-panel">
+        <div ref="commentList" class="comment-list">
+          <p v-if="comments.loading" class="muted">正在加载评论…</p>
+          <p v-else-if="comments.error" class="err">{{ comments.error }}</p>
+          <p v-else-if="!comments.items.length" class="modal-msg">还没有评论，可以在下方留言或粘贴图片</p>
+          <article v-for="item in comments.items" :key="item.id" class="comment-item">
+            <time class="comment-time">{{ formatCommentTime(item.created_at) }}</time>
+            <p v-if="item.body" class="comment-body">{{ item.body }}</p>
+            <div v-if="item.images?.length" class="comment-images">
+              <a v-for="(img, i) in item.images" :key="img.url + i" :href="img.url" target="_blank" rel="noopener">
+                <img :src="img.url" :alt="img.name || '评论图片'" />
+              </a>
+            </div>
+          </article>
+        </div>
+        <form class="comment-composer" @submit.prevent="submitComment">
+          <textarea
+            v-model="draftText"
+            rows="3"
+            placeholder="输入评论，可直接粘贴图片"
+            :disabled="comments.sending"
+            @paste="onCommentPaste"
+          ></textarea>
+          <div v-if="draftImages.length" class="draft-images">
+            <div v-for="(img, i) in draftImages" :key="img.url" class="draft-thumb">
+              <img :src="img.url" :alt="img.name" />
+              <button type="button" class="draft-remove" @click="removeDraftImage(i)">删除</button>
+            </div>
+          </div>
+          <div class="composer-actions">
+            <label class="btn-export composer-upload">
+              添加图片
+              <input type="file" accept="image/*" multiple hidden :disabled="comments.sending" @change="onPickImages" />
+            </label>
+            <button class="btn-export composer-send" type="submit" :disabled="!canSendComment || comments.sending">
+              {{ comments.sending ? "发送中…" : "发送" }}
+            </button>
+          </div>
+        </form>
+      </div>
+    </aside>
+
+    <div v-if="infoModal.open" class="review-mask" @wheel.self.prevent @touchmove.self.prevent @click.self="closeCaseInfo">
       <div class="review-modal" role="dialog" aria-modal="true" aria-labelledby="case-info-title">
         <header class="modal-hd">
           <div class="modal-title-row">
@@ -195,11 +269,24 @@
         </div>
       </div>
     </div>
+
+    <button
+      v-show="showBackTop"
+      type="button"
+      class="back-top"
+      aria-label="回到顶部"
+      title="回到顶部"
+      @click="scrollToTop"
+    >
+      <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+        <path fill="currentColor" d="M12 5.5 5.8 11.7a1 1 0 0 0 1.4 1.4L11 9.3V19a1 1 0 1 0 2 0V9.3l3.8 3.8a1 1 0 1 0 1.4-1.4Z"/>
+      </svg>
+    </button>
   </div>
 </template>
 
 <script setup>
-import { computed, defineComponent, h, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, defineComponent, h, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { api } from "../api";
 
 const BlockText = defineComponent({
@@ -238,12 +325,19 @@ const qInput = ref("");
 const q = ref("");
 const priority = ref("");
 const page = ref(1);
+const pageInput = ref("1");
 const pageSize = ref(20);
 const selectedId = ref(null);
 const loading = ref(false);
 const error = ref("");
 const modal = ref({ open: false, loading: false, error: "", data: null, endpoint: "" });
+const showBackTop = ref(false);
 const infoModal = ref({ open: false });
+const drawer = ref({ open: false, mode: "review" });
+const commentList = ref(null);
+const comments = ref({ loading: false, error: "", items: [], sending: false });
+const draftText = ref("");
+const draftImages = ref([]);
 
 let qTimer = null;
 
@@ -302,6 +396,30 @@ const emptyReviewMessage = computed(() => {
   const text = errorText(msg);
   return text || "该用例在此端报告中没有推演详情";
 });
+
+const commentTitle = computed(() => {
+  const c = selectedCase.value;
+  if (!c) return "";
+  return `${c.key || ""} ${c.description || c.title || ""}`.trim();
+});
+
+const canSendComment = computed(() => Boolean(draftText.value.trim() || draftImages.value.length));
+
+watch(
+  () => infoModal.value.open,
+  (open) => {
+    setScrollLocked(Boolean(open));
+    onScroll();
+  }
+);
+
+watch(
+  () => drawer.value.open,
+  (open) => {
+    setDrawerOpen(open);
+    onScroll();
+  }
+);
 
 watch(qInput, (val) => {
   clearTimeout(qTimer);
@@ -368,6 +486,7 @@ async function reload() {
   if (!productId.value) return;
   loading.value = true;
   error.value = "";
+  doc.value = { ...doc.value, items: [] };
   try {
     const data = await api.caseDocs({
       product_id: productId.value,
@@ -382,6 +501,7 @@ async function reload() {
     priorities.value = data.priorities || [];
     caseVersion.value = data.version || caseVersion.value;
     if (data.page) page.value = data.page;
+    pageInput.value = String(page.value);
     keepSelection();
   } catch (e) {
     error.value = errorText(e);
@@ -416,9 +536,33 @@ function onPageSizeChange() {
 
 function goPage(next) {
   const target = Math.min(Math.max(1, next), pageCount.value);
+  pageInput.value = String(target);
   if (target === page.value) return;
   page.value = target;
   reload();
+}
+
+function jumpToPage() {
+  const n = parseInt(String(pageInput.value), 10);
+  if (!Number.isFinite(n)) {
+    pageInput.value = String(page.value);
+    return;
+  }
+  goPage(n);
+}
+
+function setScrollLocked(locked) {
+  const root = document.documentElement;
+  if (locked) {
+    const gap = window.innerWidth - root.clientWidth;
+    root.classList.add("modal-open");
+    document.body.style.overflow = "hidden";
+    if (gap > 0) document.body.style.paddingRight = `${gap}px`;
+  } else {
+    root.classList.remove("modal-open");
+    document.body.style.overflow = "";
+    document.body.style.paddingRight = "";
+  }
 }
 
 function errorText(e) {
@@ -430,10 +574,130 @@ function errorText(e) {
   return String(raw);
 }
 
+function setDrawerOpen(open) {
+  const root = document.documentElement;
+  root.style.setProperty("--drawer-w", open ? "33.333vw" : "0px");
+  root.classList.toggle("drawer-open", Boolean(open));
+}
+
+function clearDraftImages() {
+  for (const item of draftImages.value) {
+    if (item.url) URL.revokeObjectURL(item.url);
+  }
+  draftImages.value = [];
+}
+
+function closeDrawer() {
+  drawer.value = { open: false, mode: "review" };
+  modal.value = { open: false, loading: false, error: "", data: null, endpoint: "" };
+  comments.value = { loading: false, error: "", items: [], sending: false };
+  draftText.value = "";
+  clearDraftImages();
+}
+
+function isCommentOpen(caseItem) {
+  return Boolean(drawer.value.open && drawer.value.mode === "comments" && selectedId.value === caseItem?.id);
+}
+
+async function scrollCommentsToBottom() {
+  await nextTick();
+  requestAnimationFrame(() => {
+    const el = commentList.value;
+    if (el) el.scrollTop = el.scrollHeight;
+  });
+}
+
+function formatCommentTime(value) {
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return value || "";
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function addDraftImages(files) {
+  const next = [];
+  for (const file of files) {
+    if (!file || !String(file.type || "").startsWith("image/")) continue;
+    if (draftImages.value.length + next.length >= 9) break;
+    next.push({ file, name: file.name || "image", url: URL.createObjectURL(file) });
+  }
+  if (next.length) draftImages.value = [...draftImages.value, ...next];
+}
+
+function removeDraftImage(index) {
+  const item = draftImages.value[index];
+  if (item?.url) URL.revokeObjectURL(item.url);
+  draftImages.value = draftImages.value.filter((_, i) => i !== index);
+}
+
+function onPickImages(e) {
+  addDraftImages(Array.from(e.target.files || []));
+  e.target.value = "";
+}
+
+function onCommentPaste(e) {
+  const items = e.clipboardData?.items || [];
+  const files = [];
+  for (const item of items) {
+    if (item.kind === "file" && String(item.type || "").startsWith("image/")) {
+      const file = item.getAsFile();
+      if (file) files.push(file);
+    }
+  }
+  if (!files.length) return;
+  e.preventDefault();
+  addDraftImages(files);
+}
+
+async function loadComments(caseItem) {
+  comments.value = { ...comments.value, loading: true, error: "", items: comments.value.items || [] };
+  try {
+    const data = await api.caseComments(caseItem.id);
+    comments.value = { loading: false, error: "", items: data.items || [], sending: false };
+    await scrollCommentsToBottom();
+  } catch (e) {
+    comments.value = { loading: false, error: errorText(e), items: [], sending: false };
+  }
+}
+
+async function openComments(caseItem) {
+  if (!caseItem?.id) return;
+  selectedId.value = caseItem.id;
+  drawer.value = { open: true, mode: "comments" };
+  modal.value = { open: false, loading: false, error: "", data: null, endpoint: "" };
+  await loadComments(caseItem);
+}
+
+async function submitComment() {
+  const current = selectedCase.value;
+  if (!current?.id || !canSendComment.value || comments.value.sending) return;
+  comments.value = { ...comments.value, sending: true, error: "" };
+  const form = new FormData();
+  form.append("body", draftText.value.trim());
+  if (caseVersion.value) form.append("case_version", caseVersion.value);
+  for (const item of draftImages.value) form.append("images", item.file, item.name);
+  try {
+    const created = await api.createComment(current.id, form);
+    comments.value = {
+      loading: false,
+      error: "",
+      items: [...comments.value.items, created],
+      sending: false,
+    };
+    current.comment_count = (current.comment_count || 0) + 1;
+    draftText.value = "";
+    clearDraftImages();
+    await scrollCommentsToBottom();
+  } catch (e) {
+    comments.value = { ...comments.value, sending: false, error: errorText(e) };
+  }
+}
+
 async function openReview(endpoint, caseItem) {
   const current = caseItem || selectedCase.value;
   if (current?.id) selectedId.value = current.id;
   if (!current || !productId.value || !caseVersion.value || !endpoint) return;
+  drawer.value = { open: true, mode: "review" };
   modal.value = { open: true, loading: true, error: "", data: null, endpoint };
   try {
     const data = await api.reviewDetail({
@@ -449,7 +713,7 @@ async function openReview(endpoint, caseItem) {
 }
 
 function closeModal() {
-  modal.value = { open: false, loading: false, error: "", data: null, endpoint: "" };
+  closeDrawer();
 }
 
 function openCaseInfo() {
@@ -466,7 +730,7 @@ function onKey(e) {
     closeCaseInfo();
     return;
   }
-  if (modal.value.open) closeModal();
+  if (drawer.value.open) closeDrawer();
 }
 
 async function exportTable() {
@@ -513,8 +777,19 @@ async function exportTable() {
   URL.revokeObjectURL(a.href);
 }
 
+function onScroll() {
+  showBackTop.value = window.scrollY > 240 && !infoModal.value.open;
+}
+
+function scrollToTop() {
+  const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  window.scrollTo({ top: 0, behavior: reduce ? "auto" : "smooth" });
+}
+
 onMounted(async () => {
   window.addEventListener("keydown", onKey);
+  window.addEventListener("scroll", onScroll, { passive: true });
+  onScroll();
   try {
     products.value = await api.products();
     if (products.value.length) {
@@ -528,6 +803,10 @@ onMounted(async () => {
 
 onUnmounted(() => {
   window.removeEventListener("keydown", onKey);
+  window.removeEventListener("scroll", onScroll);
   clearTimeout(qTimer);
+  setScrollLocked(false);
+  setDrawerOpen(false);
+  clearDraftImages();
 });
 </script>

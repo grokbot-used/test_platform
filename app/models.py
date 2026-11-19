@@ -121,3 +121,37 @@ class ReportCaseLink(Base):
     report_version: Mapped[ReportVersion] = relationship(back_populates="links")
     case: Mapped[TestCase] = relationship()
     case_version: Mapped[TestCaseVersion | None] = relationship()
+
+
+class CaseDocMeta(Base):
+    __tablename__ = "case_doc_metas"
+    __table_args__ = (UniqueConstraint("product_id", "version", name="uq_case_doc_product_version"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), nullable=False, index=True)
+    version: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_file: Mapped[str] = mapped_column(String(500), default="")
+    source_size: Mapped[int] = mapped_column(Integer, default=0)
+    source_mtime_ns: Mapped[int] = mapped_column(BigInteger, default=0)
+    pending_json: Mapped[str] = mapped_column(Text, default="[]")
+    untested: Mapped[int] = mapped_column(Integer, default=0)
+    info_available: Mapped[int] = mapped_column(Integer, default=0)
+    info_title: Mapped[str] = mapped_column(String(500), default="")
+    info_fields_json: Mapped[str] = mapped_column(Text, default="[]")
+    info_fragment_page: Mapped[str] = mapped_column(Text, default="")
+    parsed: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class CaseComment(Base):
+    __tablename__ = "case_comments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    case_id: Mapped[int] = mapped_column(ForeignKey("test_cases.id"), nullable=False, index=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), nullable=False, index=True)
+    case_version: Mapped[str] = mapped_column(String(32), default="")
+    body: Mapped[str] = mapped_column(Text, default="")
+    images_json: Mapped[str] = mapped_column(Text, default="[]")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
+
+    case: Mapped[TestCase] = relationship()
+

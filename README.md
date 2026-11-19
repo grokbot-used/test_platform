@@ -27,9 +27,10 @@ uvicorn app.main:app --host 127.0.0.1 --port 8080
 
 ## 数据说明
 
-- 数据库：`data/platform.db`（SQLite），存用例/报告元数据与关联结论，以及推演详情表格字段（编号、标题、链路、结果、原因、备注）和报告页头（仓库、分支、参与人、样式）。
-- 原始 HTML / Markdown 仍放在 `data/files/`。导入或启动时解析一次写入数据库，之后 `/api/review-detail` 按用例读库，不再每次全量解析报告。
-- 种子源文件在 `data/sources/`，运行时不依赖仓库外的目录。`app.seed` 会先把正式文件拷贝到此处再入库，并回填推演详情。
+- 数据库：`data/platform.db`（SQLite），存用例/报告元数据与关联结论、推演详情表格字段（链路、结果、原因、备注）和报告页头（仓库、分支、参与人、样式），以及用例文档附加信息（待确认、不测统计、用例信息）和用例评论。
+- 原始 HTML / Markdown 仍放在 `data/files/`，评论图片在 `data/files/comments/`。导入或启动时解析一次写入数据库，之后用例分页与 `/api/review-detail` 按库读取，不再每次全量解析 HTML。
+- 无独立 Alembic 脚本；表结构由启动时 `create_all()` 与 `migrate_schema()` 维护。
+- 种子源文件在 `data/sources/`，运行时不依赖仓库外的目录。`app.seed` 会先把正式文件拷贝到此处再入库，并回填推演详情与用例文档信息。
 - `data/` 下的源文件与数据库默认不进入 git（部分报告超过 4MB）。重新部署时在本机准备好 `data/sources` 后执行 `python -m app.seed`。
 
 种子默认会重建数据库。重复运行是安全的，但会清空手工新增的数据。
@@ -48,10 +49,10 @@ uvicorn app.main:app --host 127.0.0.1 --port 8080
 
 ```bash
 # 加载镜像
-docker load -i test_platform-0.1.3.tar
+docker load -i test_platform-0.1.4.tar
 
 # 启动（本机 8080）
-docker run --rm -p 8080:8080 test_platform:0.1.3
+docker run --rm -p 8080:8080 test_platform:0.1.4
 ```
 
 浏览器打开 <http://127.0.0.1:8080>。也可用仓库里的 `docker-compose.yml` 在有 Dockerfile 和数据的情况下重新构建：`docker compose up --build`。

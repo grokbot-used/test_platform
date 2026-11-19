@@ -71,6 +71,9 @@ export const api = {
     ),
   reviewDetail: (params = {}) =>
     request("/api/review-detail?" + new URLSearchParams(clean(params))),
+  caseComments: (caseId) => request(`/api/cases/${caseId}/comments`),
+  createComment: (caseId, form) =>
+    request(`/api/cases/${caseId}/comments`, { method: "POST", body: form }),
 };
 
 function clean(params) {

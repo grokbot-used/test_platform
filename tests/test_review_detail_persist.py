@@ -24,7 +24,7 @@ def test_review_detail_reads_stored_fields_for_gma_backend():
         # report version 18 is 后端静态推演 v1.0.1 based on v1.0.6
         rv = db.get(ReportVersion, 18)
         assert rv is not None
-        persist_report_version_details(db, rv, rv.report.product if rv.report else None)
+        persist_report_version_details(db, rv, rv.report.product if rv.report else None, force=True)
         db.refresh(rv)
         assert rv.header_parsed == 1
         assert rv.details_parsed == 1
@@ -35,7 +35,8 @@ def test_review_detail_reads_stored_fields_for_gma_backend():
             .one()
         )
         assert link.detail_parsed == 1
-        assert "推演用例编号" in (link.fields_json or "")
+        assert "推演用例编号" not in (link.fields_json or "")
+        assert "用例标题" not in (link.fields_json or "")
         assert "后端链路" in (link.section_html or "")
         assert "问题级别" not in (link.section_html or "")
 
@@ -44,7 +45,9 @@ def test_review_detail_reads_stored_fields_for_gma_backend():
         elapsed = time.perf_counter() - t0
         assert data["found"] is True
         labels = [f["label"] for f in data["fields"]]
-        assert labels == ["推演用例编号", "用例标题", "后端链路", "推演结果", "不通过原因", "备注"]
+        assert labels == ["后端链路", "推演结果", "不通过原因", "备注"]
+        assert "推演用例编号" not in data["html"]
+        assert "用例标题" not in data["html"]
         assert data["heading"].startswith("#81")
         assert data["repo"]
         assert "问题级别" not in data["html"]

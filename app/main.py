@@ -70,6 +70,9 @@ def _startup():
     finally:
         db.close()
     threading.Thread(target=backfill_review_details_async, name="review-detail-backfill", daemon=True).start()
+    from app.case_doc_store import backfill_case_doc_metas_async
+
+    threading.Thread(target=backfill_case_doc_metas_async, name="case-doc-backfill", daemon=True).start()
 
 
 def version_sort(values: list[str]) -> list[str]:
@@ -802,6 +805,9 @@ async def import_cases(
         upsert_case_version(db, product, rec, ver, rel)
         count += 1
     db.commit()
+    from app.case_doc_store import persist_case_doc_meta
+
+    persist_case_doc_meta(db, product.id, ver, rel, force=True)
     return {"imported": count, "version": ver, "source_file": rel}
 
 
@@ -974,7 +980,11 @@ def get_case_docs(
         page = page_count
     start = (page - 1) * page_size
     page_rows = filtered[start : start + page_size]
-    states = case_endpoint_results(db, product_id, current, [c.id for c, _ in page_rows])
+    ids = [c.id for c, _ in page_rows]
+    states = case_endpoint_results(db, product_id, current, ids)
+    from app.comments import comment_counts
+
+    counts = comment_counts(db, ids)
 
     items = []
     for case, lv in page_rows:
@@ -994,18 +1004,15 @@ def get_case_docs(
                 "steps": lv.steps,
                 "expected": lv.expected,
                 "endpoints": states.get(case.id, []),
+                "comment_count": counts.get(case.id, 0),
             }
         )
-    pending: list[str] = []
-    case_info = {"available": False, "title": "", "fields": [], "fragment_page": ""}
-    untested = 0
-    if source_file:
-        path = resolve_file(source_file)
-        if path and path.suffix.lower() in {".html", ".htm"}:
-            html_text = path.read_text(encoding="utf-8", errors="replace")
-            pending = parse_pending_notes(html_text)
-            case_info = extract_case_document_info(html_text)
-            untested = count_untested_cases(html_text)
+    from app.case_doc_store import get_case_doc_meta
+
+    doc_meta = get_case_doc_meta(db, product_id, current, source_file)
+    pending = doc_meta["pending"]
+    case_info = doc_meta["case_info"]
+    untested = doc_meta["untested"]
     priority_stats = build_priority_stats([lv.priority for _c, lv in rows], untested)
     return {
         "product": product_out(product),
@@ -1059,6 +1066,34 @@ def get_review_detail(
         raise HTTPException(404, "用例不存在")
     data["product"] = product_out(product)
     return data
+
+
+
+
+@app.get("/api/cases/{case_id}/comments")
+def get_case_comments(case_id: int, db: Session = Depends(get_db)):
+    from app.comments import list_comments
+
+    return list_comments(db, case_id)
+
+
+@app.post("/api/cases/{case_id}/comments")
+async def post_case_comment(
+    case_id: int,
+    body: str = Form(""),
+    case_version: str | None = Form(None),
+    images: list[UploadFile] = File(default=[]),
+    db: Session = Depends(get_db),
+):
+    from app.comments import create_comment
+
+    return await create_comment(
+        db,
+        case_id,
+        body=body or "",
+        case_version=case_version or "",
+        images=images,
+    )
 
 
 # --------------- static / spa ---------------
