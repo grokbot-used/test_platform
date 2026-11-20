@@ -590,7 +590,7 @@ input::placeholder, textarea::placeholder { color: var(--text-secondary); opacit
   height: auto;
   border-left-color: var(--primary);
 }
-.dock-btn.comment-entry .dock-result { color: var(--primary); font-size: 16px; line-height: 22px; }
+.dock-btn.comment-entry .dock-result { color: var(--primary); font-size: 15px; line-height: 22px; }
 .dock-btn.comment-entry.active,
 .dock-btn.comment-entry:hover {
   background: var(--primary-soft);
@@ -726,8 +726,21 @@ input::placeholder, textarea::placeholder { color: var(--text-secondary); opacit
   animation: mask-in var(--duration) var(--ease);
 }
 html.modal-open,
-html.modal-open body {
+html.modal-open body,
+html.drawer-open,
+html.drawer-open body {
   overflow: hidden;
+  overscroll-behavior: none;
+}
+html.drawer-open .doc-page {
+  height: calc(100vh - var(--header-h));
+  overflow: hidden;
+}
+html.drawer-open .doc-scroll {
+  height: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 .review-modal {
   width: min(980px, 100%);
@@ -876,7 +889,7 @@ html.modal-open body {
   position: fixed;
   top: var(--header-h);
   right: 0;
-  width: 33.333vw;
+  width: 40vw;
   height: calc(100vh - var(--header-h));
   z-index: 80;
   background: var(--surface);
@@ -907,6 +920,7 @@ html.modal-open body {
   min-height: 0;
   min-width: 0;
   overflow: auto;
+  overscroll-behavior: contain;
   padding: 12px 16px 16px;
   display: flex;
   flex-direction: column;
@@ -934,6 +948,7 @@ html.modal-open body {
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
+  overscroll-behavior: contain;
   padding: 12px 16px;
   display: flex;
   flex-direction: column;
@@ -946,13 +961,37 @@ html.modal-open body {
   padding: 10px 12px;
   min-width: 0;
 }
+.comment-item-hd {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
 .comment-time {
   display: block;
   font-size: 12px;
   line-height: 18px;
   color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
-  margin-bottom: 6px;
+}
+.comment-delete {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: var(--p1);
+  font-size: 13px;
+  line-height: 20px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.comment-delete:hover {
+  background: var(--p1-bg);
+}
+.comment-delete:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 .comment-body {
   margin: 0;
@@ -968,7 +1007,17 @@ html.modal-open body {
   gap: 8px;
   margin-top: 8px;
 }
-.comment-images a { display: block; min-width: 0; }
+.comment-image-btn {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: zoom-in;
+  border-radius: 8px;
+}
 .comment-images img {
   display: block;
   max-width: 100%;
@@ -1059,7 +1108,7 @@ html.modal-open body {
 
 .back-top {
   position: fixed;
-  right: calc(24px + var(--drawer-w));
+  right: calc(32px + var(--drawer-w));
   bottom: 24px;
   z-index: 40;
   width: 44px;
@@ -1086,5 +1135,119 @@ html.modal-open body {
 }
 .back-top:active { transform: scale(0.96); }
 @media (max-width: 800px) {
-  .back-top { right: calc(16px + var(--drawer-w)); bottom: 16px; }
+  .back-top { right: calc(24px + var(--drawer-w)); bottom: 16px; }
+}
+
+.confirm-mask { z-index: 110; align-items: center; padding-top: 0; }
+.confirm-dialog {
+  width: min(420px, 100%);
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-hover), 0 16px 40px rgba(16, 24, 40, 0.16);
+  padding: 20px 20px 16px;
+  animation: rise-in 200ms var(--ease) both;
+}
+.confirm-dialog h2 {
+  margin: 0 0 8px;
+  font-size: 18px;
+  line-height: 26px;
+  font-weight: 700;
+}
+.confirm-dialog p {
+  margin: 0 0 16px;
+  font-size: 14px;
+  line-height: 22px;
+  color: var(--text-secondary);
+}
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.btn-danger {
+  background: var(--p1);
+  color: #fff;
+  border-color: var(--p1);
+}
+.btn-danger:hover:not(:disabled) {
+  background: #991b1b;
+  border-color: #991b1b;
+  color: #fff;
+}
+.btn-danger:disabled { opacity: 0.55; cursor: not-allowed; }
+
+.img-lightbox-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  background: rgba(16, 24, 40, 0.72);
+  display: flex;
+  flex-direction: column;
+  animation: mask-in var(--duration) var(--ease);
+}
+.img-lightbox-toolbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 16px;
+}
+.img-tool-btn {
+  border: 1px solid transparent;
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--text);
+  border-radius: var(--radius-ctrl);
+  font-size: 13px;
+  line-height: 20px;
+  padding: 6px 12px;
+  cursor: pointer;
+  box-shadow: var(--shadow);
+}
+.img-tool-btn:hover {
+  background: #fff;
+  border-color: #BFDBFE;
+  color: var(--primary);
+}
+.img-zoom-label {
+  min-width: 3.5em;
+  color: #fff;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  text-align: left;
+}
+.img-lightbox-stage {
+  flex: 1 1 auto;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px 24px 32px;
+}
+.img-lightbox-photo {
+  max-width: min(90vw, 1100px);
+  max-height: calc(100vh - 120px);
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  border-radius: 8px;
+  box-shadow: 0 16px 40px rgba(16, 24, 40, 0.28);
+  transform-origin: center center;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+.img-loupe {
+  position: absolute;
+  width: 168px;
+  height: 168px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  box-shadow: 0 4px 16px rgba(16, 24, 40, 0.28);
+  pointer-events: none;
+  background-repeat: no-repeat;
+  background-color: var(--surface);
 }

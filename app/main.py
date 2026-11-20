@@ -1096,6 +1096,13 @@ async def post_case_comment(
     )
 
 
+@app.delete("/api/cases/{case_id}/comments/{comment_id}")
+def delete_case_comment(case_id: int, comment_id: int, db: Session = Depends(get_db)):
+    from app.comments import delete_comment
+
+    return delete_comment(db, case_id, comment_id)
+
+
 # --------------- static / spa ---------------
 
 if FILES_DIR.exists():

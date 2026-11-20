@@ -74,6 +74,8 @@ export const api = {
   caseComments: (caseId) => request(`/api/cases/${caseId}/comments`),
   createComment: (caseId, form) =>
     request(`/api/cases/${caseId}/comments`, { method: "POST", body: form }),
+  deleteComment: (caseId, commentId) =>
+    request(`/api/cases/${caseId}/comments/${commentId}`, { method: "DELETE" }),
 };
 
 function clean(params) {

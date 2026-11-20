@@ -1,7 +1,9 @@
 services:
   web:
-    image: test_platform:0.1.4
+    image: test_platform:0.1.5
     build: .
     ports:
       - "8080:8080"
     restart: unless-stopped
+    volumes:
+      - "C:/Users/admin/test_platform/data:/app/data"

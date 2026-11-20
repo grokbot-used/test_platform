@@ -7,6 +7,7 @@ import re
 import uuid
 from datetime import datetime
 from pathlib import Path
+import shutil
 
 from fastapi import HTTPException, UploadFile
 from sqlalchemy import func
@@ -120,7 +121,7 @@ async def create_comment(
     text = (body or "").strip()
     files = [f for f in (images or []) if f is not None and (f.filename or f.content_type)]
     if not text and not files:
-        raise HTTPException(400, "请输入评论或粘贴图片")
+        raise HTTPException(400, "请输入测试执行记录或粘贴图片")
     if len(files) > MAX_IMAGES:
         raise HTTPException(400, f"一次最多上传 {MAX_IMAGES} 张图片")
 
@@ -137,7 +138,7 @@ async def create_comment(
         payloads.append((data, _safe_filename(upload.filename or "", content_type), content_type))
 
     if not text and not payloads:
-        raise HTTPException(400, "请输入评论或粘贴图片")
+        raise HTTPException(400, "请输入测试执行记录或粘贴图片")
 
     row = CaseComment(
         case_id=case.id,
@@ -162,3 +163,18 @@ async def create_comment(
     db.commit()
     db.refresh(row)
     return comment_out(row)
+
+
+def delete_comment(db: Session, case_id: int, comment_id: int) -> dict:
+    case = db.get(TestCase, case_id)
+    if not case:
+        raise HTTPException(404, "用例不存在")
+    row = db.get(CaseComment, comment_id)
+    if not row or row.case_id != case_id:
+        raise HTTPException(404, "测试执行记录不存在")
+    folder = FILES_DIR / "comments" / str(row.id)
+    db.delete(row)
+    db.commit()
+    if folder.exists():
+        shutil.rmtree(folder, ignore_errors=True)
+    return {"ok": True, "id": comment_id, "case_id": case_id}

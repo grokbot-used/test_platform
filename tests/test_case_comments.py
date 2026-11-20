@@ -5,7 +5,8 @@ import pytest
 from fastapi import HTTPException, UploadFile
 from starlette.datastructures import Headers
 
-from app.comments import comment_counts, create_comment, list_comments
+from app.comments import comment_counts, create_comment, delete_comment, list_comments
+from app.config import FILES_DIR
 from app.db import SessionLocal, init_db
 from app.main import get_case_docs
 from app.models import CaseComment, TestCase
@@ -54,8 +55,25 @@ def test_case_comments_text_image_and_order():
         found = next((item for item in docs["items"] if item["id"] == case.id), None)
         if found is not None:
             assert found["comment_count"] >= 2
+
+        image_dir = FILES_DIR / "comments" / str(second["id"])
+        assert image_dir.exists()
+        removed = delete_comment(db, case.id, second["id"])
+        assert removed["ok"] is True
+        assert not image_dir.exists()
+        leftover = list_comments(db, case.id)
+        assert second["id"] not in [item["id"] for item in leftover["items"]]
+        with pytest.raises(HTTPException) as missing:
+            delete_comment(db, case.id, second["id"])
+        assert missing.value.status_code == 404
+        created_ids.remove(second["id"])
     finally:
         if created_ids:
+            from shutil import rmtree
+            for cid in created_ids:
+                folder = FILES_DIR / "comments" / str(cid)
+                if folder.exists():
+                    rmtree(folder, ignore_errors=True)
             db.query(CaseComment).filter(CaseComment.id.in_(created_ids)).delete(synchronize_session=False)
             db.commit()
         db.close()

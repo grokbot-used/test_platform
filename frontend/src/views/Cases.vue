@@ -1,5 +1,6 @@
 <template>
   <div class="doc-page" :class="{ 'drawer-open': drawer.open }">
+    <div ref="docScroll" class="doc-scroll" @scroll="onScroll">
     <div class="doc-shell">
       <div class="doc-hero">
         <div class="hero-row">
@@ -147,13 +148,14 @@
             :class="{ ready: (c.comment_count || 0) > 0, active: isCommentOpen(c) }"
             @click="openComments(c)"
           >
-            <span class="dock-name">评论</span>
-            <span class="dock-result">评论</span>
+            <span class="dock-name">测试执行记录</span>
+            <span class="dock-result">测试执行记录</span>
             <span class="dock-ver">{{ (c.comment_count || 0) > 0 ? c.comment_count + " 条" : "暂无" }}</span>
           </button>
         </aside>
       </article>
 
+    </div>
     </div>
 
     <aside
@@ -166,7 +168,7 @@
       <header class="modal-hd drawer-hd">
         <div class="modal-title-row">
           <template v-if="drawer.mode === 'comments'">
-            <h2 id="comment-drawer-title">评论 · {{ commentTitle }}</h2>
+            <h2 id="comment-drawer-title">测试执行记录 · {{ commentTitle }}</h2>
           </template>
           <template v-else>
             <h2 id="review-modal-title">{{ modalTitle }}</h2>
@@ -203,16 +205,25 @@
 
       <div v-else class="comment-panel">
         <div ref="commentList" class="comment-list">
-          <p v-if="comments.loading" class="muted">正在加载评论…</p>
+          <p v-if="comments.loading" class="muted">正在加载测试执行记录…</p>
           <p v-else-if="comments.error" class="err">{{ comments.error }}</p>
-          <p v-else-if="!comments.items.length" class="modal-msg">还没有评论，可以在下方留言或粘贴图片</p>
+          <p v-else-if="!comments.items.length" class="modal-msg">还没有测试执行记录，可以在下方留言或粘贴图片</p>
           <article v-for="item in comments.items" :key="item.id" class="comment-item">
-            <time class="comment-time">{{ formatCommentTime(item.created_at) }}</time>
+            <div class="comment-item-hd">
+              <time class="comment-time">{{ formatCommentTime(item.created_at) }}</time>
+              <button type="button" class="comment-delete" :disabled="confirmDelete.deleting" @click="askDeleteComment(item)">删除</button>
+            </div>
             <p v-if="item.body" class="comment-body">{{ item.body }}</p>
             <div v-if="item.images?.length" class="comment-images">
-              <a v-for="(img, i) in item.images" :key="img.url + i" :href="img.url" target="_blank" rel="noopener">
-                <img :src="img.url" :alt="img.name || '评论图片'" />
-              </a>
+              <button
+                v-for="(img, i) in item.images"
+                :key="img.url + i"
+                type="button"
+                class="comment-image-btn"
+                @click="openLightbox(img)"
+              >
+                <img :src="img.url" :alt="img.name || '测试执行记录图片'" />
+              </button>
             </div>
           </article>
         </div>
@@ -220,7 +231,7 @@
           <textarea
             v-model="draftText"
             rows="3"
-            placeholder="输入评论，可直接粘贴图片"
+            placeholder="输入测试执行记录，可直接粘贴图片"
             :disabled="comments.sending"
             @paste="onCommentPaste"
           ></textarea>
@@ -282,6 +293,59 @@
         <path fill="currentColor" d="M12 5.5 5.8 11.7a1 1 0 0 0 1.4 1.4L11 9.3V19a1 1 0 1 0 2 0V9.3l3.8 3.8a1 1 0 1 0 1.4-1.4Z"/>
       </svg>
     </button>
+
+    <div
+      v-if="confirmDelete.open"
+      class="review-mask confirm-mask"
+      @wheel.self.prevent
+      @touchmove.self.prevent
+      @click.self="cancelDeleteComment"
+    >
+      <div class="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="confirm-delete-title">
+        <h2 id="confirm-delete-title">删除测试执行记录</h2>
+        <p>确定删除这条测试执行记录？删除后无法恢复。</p>
+        <div class="confirm-actions">
+          <button type="button" class="btn-export" :disabled="confirmDelete.deleting" @click="cancelDeleteComment">取消</button>
+          <button type="button" class="btn-export btn-danger" :disabled="confirmDelete.deleting" @click="confirmDeleteComment">
+            {{ confirmDelete.deleting ? "删除中…" : "删除" }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div
+      v-if="lightbox.open"
+      class="img-lightbox-mask"
+      @click.self="closeLightbox"
+      @wheel.prevent="onLightboxWheel"
+    >
+      <div class="img-lightbox-toolbar" @click.stop>
+        <button type="button" class="img-tool-btn" title="缩小" @click="zoomLightbox(1 / 1.25)">缩小</button>
+        <button type="button" class="img-tool-btn" title="放大" @click="zoomLightbox(1.25)">放大镜</button>
+        <button type="button" class="img-tool-btn" title="重置" @click="resetLightbox">重置</button>
+        <span class="img-zoom-label">{{ Math.round(lightbox.scale * 100) }}%</span>
+      </div>
+      <div class="img-lightbox-stage" @click="closeLightbox">
+        <img
+          class="img-lightbox-photo"
+          :src="lightbox.url"
+          :alt="lightbox.name"
+          :style="lightboxStyle"
+          draggable="false"
+          @load="onLightboxLoad"
+          @click.stop
+          @pointerdown="onLightboxPointerDown"
+          @pointermove="onLightboxPointerMove"
+          @pointerup="onLightboxPointerUp"
+          @pointerleave="onLightboxPointerLeave"
+        />
+        <div
+          v-show="lightbox.loupe.visible"
+          class="img-loupe"
+          :style="loupeStyle"
+        ></div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -335,9 +399,25 @@ const showBackTop = ref(false);
 const infoModal = ref({ open: false });
 const drawer = ref({ open: false, mode: "review" });
 const commentList = ref(null);
+const docScroll = ref(null);
 const comments = ref({ loading: false, error: "", items: [], sending: false });
 const draftText = ref("");
 const draftImages = ref([]);
+const confirmDelete = ref({ open: false, item: null, deleting: false });
+const lightbox = ref({
+  open: false,
+  url: "",
+  name: "",
+  scale: 1,
+  x: 0,
+  y: 0,
+  dragging: false,
+  dragStartX: 0,
+  dragStartY: 0,
+  originX: 0,
+  originY: 0,
+  loupe: { visible: false, x: 0, y: 0, bgSize: "", bgPos: "" },
+});
 
 let qTimer = null;
 
@@ -405,10 +485,26 @@ const commentTitle = computed(() => {
 
 const canSendComment = computed(() => Boolean(draftText.value.trim() || draftImages.value.length));
 
+const lightboxStyle = computed(() => ({
+  transform: `translate(${lightbox.value.x}px, ${lightbox.value.y}px) scale(${lightbox.value.scale})`,
+  cursor: lightbox.value.scale > 1 ? (lightbox.value.dragging ? "grabbing" : "grab") : "zoom-in",
+}));
+
+const loupeStyle = computed(() => {
+  const loupe = lightbox.value.loupe;
+  return {
+    left: `${loupe.x}px`,
+    top: `${loupe.y}px`,
+    backgroundImage: lightbox.value.url ? `url(${lightbox.value.url})` : "none",
+    backgroundSize: loupe.bgSize,
+    backgroundPosition: loupe.bgPos,
+  };
+});
+
 watch(
   () => infoModal.value.open,
-  (open) => {
-    setScrollLocked(Boolean(open));
+  () => {
+    syncPageScrollLock();
     onScroll();
   }
 );
@@ -417,6 +513,7 @@ watch(
   () => drawer.value.open,
   (open) => {
     setDrawerOpen(open);
+    syncPageScrollLock();
     onScroll();
   }
 );
@@ -554,15 +651,28 @@ function jumpToPage() {
 function setScrollLocked(locked) {
   const root = document.documentElement;
   if (locked) {
-    const gap = window.innerWidth - root.clientWidth;
+    // 仅「用例信息」/图片预览/确认框在无抽屉时补偿滚动条；抽屉打开后滚动条改到抽屉左侧，不再加 body padding。
+    const compensate = !drawer.value.open && (infoModal.value.open || lightbox.value.open || confirmDelete.value.open);
+    const gap = compensate ? window.innerWidth - root.clientWidth : 0;
     root.classList.add("modal-open");
     document.body.style.overflow = "hidden";
-    if (gap > 0) document.body.style.paddingRight = `${gap}px`;
+    document.body.style.paddingRight = gap > 0 ? `${gap}px` : "";
   } else {
     root.classList.remove("modal-open");
     document.body.style.overflow = "";
     document.body.style.paddingRight = "";
   }
+}
+
+function syncPageScrollLock() {
+  setScrollLocked(Boolean(
+    infoModal.value.open || drawer.value.open || lightbox.value.open || confirmDelete.value.open
+  ));
+}
+
+function pageScrollTop() {
+  if (drawer.value.open && docScroll.value) return docScroll.value.scrollTop;
+  return window.scrollY;
 }
 
 function errorText(e) {
@@ -576,8 +686,25 @@ function errorText(e) {
 
 function setDrawerOpen(open) {
   const root = document.documentElement;
-  root.style.setProperty("--drawer-w", open ? "33.333vw" : "0px");
-  root.classList.toggle("drawer-open", Boolean(open));
+  const scroller = docScroll.value;
+  if (open) {
+    const y = window.scrollY;
+    root.style.setProperty("--drawer-w", "40vw");
+    root.classList.add("drawer-open");
+    nextTick(() => {
+      if (scroller) scroller.scrollTop = y;
+      window.scrollTo(0, 0);
+      onScroll();
+    });
+  } else {
+    const y = scroller ? scroller.scrollTop : 0;
+    root.style.setProperty("--drawer-w", "0px");
+    root.classList.remove("drawer-open");
+    nextTick(() => {
+      window.scrollTo(0, y);
+      onScroll();
+    });
+  }
 }
 
 function clearDraftImages() {
@@ -593,6 +720,8 @@ function closeDrawer() {
   comments.value = { loading: false, error: "", items: [], sending: false };
   draftText.value = "";
   clearDraftImages();
+  cancelDeleteComment();
+  closeLightbox();
 }
 
 function isCommentOpen(caseItem) {
@@ -724,8 +853,168 @@ function closeCaseInfo() {
   infoModal.value = { open: false };
 }
 
+function askDeleteComment(item) {
+  if (!item?.id) return;
+  confirmDelete.value = { open: true, item, deleting: false };
+  syncPageScrollLock();
+}
+
+function cancelDeleteComment() {
+  if (confirmDelete.value.deleting) return;
+  confirmDelete.value = { open: false, item: null, deleting: false };
+  syncPageScrollLock();
+}
+
+async function confirmDeleteComment() {
+  const item = confirmDelete.value.item;
+  const current = selectedCase.value;
+  if (!item?.id || !current?.id || confirmDelete.value.deleting) return;
+  confirmDelete.value = { ...confirmDelete.value, deleting: true };
+  try {
+    await api.deleteComment(current.id, item.id);
+    comments.value = {
+      ...comments.value,
+      items: comments.value.items.filter((row) => row.id !== item.id),
+      error: "",
+    };
+    current.comment_count = Math.max(0, (current.comment_count || 0) - 1);
+    confirmDelete.value = { open: false, item: null, deleting: false };
+    syncPageScrollLock();
+  } catch (e) {
+    comments.value = { ...comments.value, error: errorText(e) };
+    confirmDelete.value = { ...confirmDelete.value, deleting: false };
+  }
+}
+
+function openLightbox(img) {
+  if (!img?.url) return;
+  lightbox.value = {
+    open: true,
+    url: img.url,
+    name: img.name || "图片",
+    scale: 1,
+    x: 0,
+    y: 0,
+    dragging: false,
+    dragStartX: 0,
+    dragStartY: 0,
+    originX: 0,
+    originY: 0,
+    loupe: { visible: false, x: 0, y: 0, bgSize: "", bgPos: "" },
+  };
+  syncPageScrollLock();
+}
+
+function closeLightbox() {
+  if (!lightbox.value.open) return;
+  lightbox.value = {
+    ...lightbox.value,
+    open: false,
+    dragging: false,
+    loupe: { visible: false, x: 0, y: 0, bgSize: "", bgPos: "" },
+  };
+  syncPageScrollLock();
+}
+
+function onLightboxLoad() {
+  resetLightbox();
+}
+
+function resetLightbox() {
+  lightbox.value = {
+    ...lightbox.value,
+    scale: 1,
+    x: 0,
+    y: 0,
+    dragging: false,
+    loupe: { ...lightbox.value.loupe, visible: false },
+  };
+}
+
+function zoomLightbox(factor) {
+  const next = Math.min(5, Math.max(0.5, lightbox.value.scale * factor));
+  lightbox.value = { ...lightbox.value, scale: next };
+}
+
+function onLightboxWheel(e) {
+  const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+  zoomLightbox(factor);
+}
+
+function updateLoupe(e) {
+  const img = e.currentTarget?.classList?.contains("img-lightbox-photo")
+    ? e.currentTarget
+    : (e.currentTarget.querySelector?.(".img-lightbox-photo") || document.querySelector(".img-lightbox-photo"));
+  if (!img) return;
+  const rect = img.getBoundingClientRect();
+  const over = e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom;
+  if (!over || lightbox.value.dragging) {
+    lightbox.value.loupe.visible = false;
+    return;
+  }
+  const zoom = 2.2;
+  const size = 168;
+  const px = (e.clientX - rect.left) / rect.width;
+  const py = (e.clientY - rect.top) / rect.height;
+  const stage = document.querySelector(".img-lightbox-stage");
+  const stageRect = stage ? stage.getBoundingClientRect() : { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
+  let left = e.clientX - stageRect.left - size / 2;
+  let top = e.clientY - stageRect.top - size / 2;
+  left = Math.min(Math.max(0, left), Math.max(0, stageRect.width - size));
+  top = Math.min(Math.max(0, top), Math.max(0, stageRect.height - size));
+  lightbox.value.loupe = {
+    visible: true,
+    x: left,
+    y: top,
+    bgSize: `${rect.width * zoom}px ${rect.height * zoom}px`,
+    bgPos: `${-px * rect.width * zoom + size / 2}px ${-py * rect.height * zoom + size / 2}px`,
+  };
+}
+
+function onLightboxPointerDown(e) {
+  if (e.button != null && e.button !== 0) return;
+  if (lightbox.value.scale <= 1) {
+    updateLoupe(e);
+    return;
+  }
+  e.currentTarget.setPointerCapture?.(e.pointerId);
+  lightbox.value.dragging = true;
+  lightbox.value.dragStartX = e.clientX;
+  lightbox.value.dragStartY = e.clientY;
+  lightbox.value.originX = lightbox.value.x;
+  lightbox.value.originY = lightbox.value.y;
+  lightbox.value.loupe.visible = false;
+}
+
+function onLightboxPointerMove(e) {
+  if (lightbox.value.dragging) {
+    lightbox.value.x = lightbox.value.originX + (e.clientX - lightbox.value.dragStartX);
+    lightbox.value.y = lightbox.value.originY + (e.clientY - lightbox.value.dragStartY);
+    return;
+  }
+  updateLoupe(e);
+}
+
+function onLightboxPointerUp(e) {
+  lightbox.value.dragging = false;
+  try { e.currentTarget.releasePointerCapture?.(e.pointerId); } catch (_) {}
+}
+
+function onLightboxPointerLeave() {
+  lightbox.value.dragging = false;
+  lightbox.value.loupe.visible = false;
+}
+
 function onKey(e) {
   if (e.key !== "Escape") return;
+  if (lightbox.value.open) {
+    closeLightbox();
+    return;
+  }
+  if (confirmDelete.value.open) {
+    cancelDeleteComment();
+    return;
+  }
   if (infoModal.value.open) {
     closeCaseInfo();
     return;
@@ -778,12 +1067,18 @@ async function exportTable() {
 }
 
 function onScroll() {
-  showBackTop.value = window.scrollY > 240 && !infoModal.value.open;
+  const overlay = infoModal.value.open || lightbox.value.open || confirmDelete.value.open;
+  showBackTop.value = pageScrollTop() > 240 && !overlay;
 }
 
 function scrollToTop() {
   const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  window.scrollTo({ top: 0, behavior: reduce ? "auto" : "smooth" });
+  const behavior = reduce ? "auto" : "smooth";
+  if (drawer.value.open && docScroll.value) {
+    docScroll.value.scrollTo({ top: 0, behavior });
+    return;
+  }
+  window.scrollTo({ top: 0, behavior });
 }
 
 onMounted(async () => {
