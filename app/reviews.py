@@ -201,28 +201,10 @@ def _entry_payload(endpoint: str, rv: ReportVersion | None) -> dict:
     }
 
 
-def review_entries(db: Session, product_id: int, case_version: str) -> dict:
-    reports = (
-        db.query(Report)
-        .options(joinedload(Report.versions))
-        .filter(Report.product_id == product_id)
-        .all()
-    )
-    best: dict[str, ReportVersion] = {}
-    for report in reports:
-        for rv in report.versions:
-            if (rv.based_on_case_version or "") != case_version:
-                continue
-            ends = classify_report_endpoints(report.title, report.type, rv.source_file or "")
-            for endpoint in ends:
-                cur = best.get(endpoint)
-                if cur is None or version_key(rv.version) >= version_key(cur.version):
-                    best[endpoint] = rv
-    return {
-        "product_id": product_id,
-        "case_version": case_version,
-        "endpoints": {e["id"]: _entry_payload(e["id"], best.get(e["id"])) for e in ENDPOINTS},
-    }
+def review_entries(db: Session, product_id: int, case_version: str | None = None) -> dict:
+    from app.case_reviews import review_entries as _impl
+
+    return _impl(db, product_id, case_version)
 
 
 def _link_for(db: Session, rv: ReportVersion, case_id: int) -> ReportCaseLink | None:
@@ -238,143 +220,31 @@ def review_detail(
     product_id: int,
     endpoint: str,
     case_id: int,
-    case_version: str,
+    case_version: str | None = None,
+    review_id: int | None = None,
+    review_version: str | None = None,
 ) -> dict:
-    if endpoint not in ENDPOINT_LABELS:
-        return {"available": False, "error": "未知端"}
-    case = db.get(TestCase, case_id)
-    if not case or case.product_id != product_id:
-        return {"available": False, "error": "用例不存在"}
-    cv = (
-        db.query(TestCaseVersion)
-        .filter_by(case_id=case.id, version=case_version)
-        .one_or_none()
+    from app.case_reviews import review_detail as _impl
+
+    return _impl(
+        db,
+        product_id,
+        endpoint,
+        case_id,
+        case_version,
+        review_id=review_id,
+        review_version=review_version,
     )
-    entries = review_entries(db, product_id, case_version)
-    entry = entries["endpoints"].get(endpoint) or _entry_payload(endpoint, None)
-    base = {
-        **entry,
-        "case_id": case.id,
-        "case_key": case.key,
-        "case_title": cv.title if cv else "",
-        "case_client": cv.client if cv else "",
-        "case_version": case_version,
-        "result": "",
-        "result_label": "",
-        "heading": "",
-        "fields": [],
-        "html": "",
-        "fragment_page": "",
-        "text": "",
-        "found": False,
-        "anchor": "",
-        "preview_url": "",
-        "message": "",
-        "repo": "",
-        "branch": "",
-        "participants": "",
-    }
-    if not entry["available"]:
-        base["message"] = f"当前用例版本 {case_version} 暂无{ENDPOINT_LABELS[endpoint]}推演结果"
-        return base
-
-    rv = db.get(ReportVersion, entry["report_version_id"])
-    if not rv:
-        base["available"] = False
-        base["message"] = f"当前用例版本 {case_version} 暂无{ENDPOINT_LABELS[endpoint]}推演结果"
-        return base
-
-    src = rv.source_file or ""
-    if src:
-        base["preview_url"] = f"/api/report-versions/{rv.id}/preview"
-
-    from app.review_store import payload_from_link, persist_one_case_detail
-
-    persist_one_case_detail(db, rv, case)
-    db.refresh(rv)
-    link = _link_for(db, rv, case.id)
-
-    if rv.header_parsed:
-        base["repo"] = rv.repo or ""
-        base["branch"] = rv.branch or ""
-        base["participants"] = rv.participants or ""
-
-    if link:
-        base["result"] = link.result or ""
-        base["result_label"] = RESULT_LABELS.get(link.result or "", link.result or "未记录")
-        if link.detail_parsed:
-            detail = payload_from_link(link, rv.style_css or "", case.key)
-            base.update(
-                {
-                    "found": detail["found"],
-                    "anchor": detail["anchor"],
-                    "html": detail.get("html") or "",
-                    "fragment_page": detail.get("fragment_page") or "",
-                    "text": detail["text"],
-                    "fields": detail["fields"],
-                    "heading": detail["heading"],
-                }
-            )
-            if detail["result"] and not base["result"]:
-                base["result"] = detail["result"]
-                base["result_label"] = RESULT_LABELS.get(detail["result"], detail["result"])
-            if detail["anchor"]:
-                base["preview_url"] = f"/api/report-versions/{rv.id}/preview#{detail['anchor']}"
-
-    if not base["found"]:
-        title = rv.report.title if rv.report else "推演报告"
-        base["message"] = (
-            f"该用例在此端报告中没有推演详情（{title} {rv.version}"
-            f"，依据用例 {rv.based_on_case_version or '未知'}）"
-        )
-    return base
 
 
 def case_endpoint_results(
     db: Session,
     product_id: int,
-    case_version: str,
+    case_version: str | None,
     case_ids: list[int],
 ) -> dict[int, list[dict]]:
-    """Per-case four-end entry payloads, including pass/fail/skip from DB links."""
-    meta = review_entries(db, product_id, case_version)["endpoints"]
-    rv_ids = [
-        ep["report_version_id"]
-        for ep in meta.values()
-        if ep.get("available") and ep.get("report_version_id")
-    ]
-    links_by: dict[tuple[int, int], str] = {}
-    if rv_ids and case_ids:
-        rows = (
-            db.query(ReportCaseLink)
-            .filter(
-                ReportCaseLink.report_version_id.in_(rv_ids),
-                ReportCaseLink.case_id.in_(case_ids),
-            )
-            .all()
-        )
-        for link in rows:
-            links_by[(link.report_version_id, link.case_id)] = link.result or ""
+    """Per-case four-end entry payloads from the latest case_reviews row."""
+    from app.case_reviews import case_endpoint_results as _impl
 
-    out: dict[int, list[dict]] = {}
-    for cid in case_ids:
-        item_eps: list[dict] = []
-        for spec in ENDPOINTS:
-            ep = dict(meta.get(spec["id"]) or _entry_payload(spec["id"], None))
-            result = ""
-            found = False
-            if ep.get("available") and ep.get("report_version_id"):
-                key = (ep["report_version_id"], cid)
-                if key in links_by:
-                    found = True
-                    result = links_by[key]
-                    result_label = RESULT_LABELS.get(result, result or "未记录")
-                else:
-                    result_label = "无详情"
-            else:
-                ep["available"] = False
-                result_label = "暂无"
-            ep.update({"result": result, "result_label": result_label, "found": found})
-            item_eps.append(ep)
-        out[cid] = item_eps
-    return out
+    return _impl(db, product_id, case_version, case_ids)
+

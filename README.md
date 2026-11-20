@@ -53,11 +53,13 @@ SQLite 库和评论图片在容器内的 `/app/data`（`platform.db`、`files/`�
 
 ```bash
 # 加载镜像
-docker load -i test_platform-0.1.6.tar
+docker load -i test_platform-0.1.7.tar
 
 # 启动：把本地 data 挂进容器
 mkdir C:\Users\admin\test_platform
-docker run --rm -p 8080:8080 -v C:\Users\admin\test_platform\data:/app/data test_platform:0.1.6
+docker run --rm -p 8080:8080 -v C:\Users\admin\test_platform\data:/app/data test_platform:0.1.7
 ```
+
+压缩包同样可以加载：`docker load -i test_platform-0.1.7.tar.gz`。
 
 之后同一目录再次启动即可继续用同一份库。也可用仓库里的 `docker-compose.yml`（已配置 `C:/Users/admin/test_platform/data:/app/data`）：`docker compose up --build`。

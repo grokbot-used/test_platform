@@ -16,7 +16,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from app.config import DATA_DIR, DB_PATH, FILES_DIR, SOURCES_DIR  # noqa: E402
-from app.db import SessionLocal, engine, init_db  # noqa: E402
+from app.db import SessionLocal, engine, init_db, touch_case  # noqa: E402
 from app.models import (  # noqa: E402
     Base,
     Product,
@@ -227,6 +227,7 @@ def upsert_case_version(
         db.add(cv)
         db.flush()
     case.latest_version = bump_latest(case.latest_version, version)
+    touch_case(case)
     return cv
 
 

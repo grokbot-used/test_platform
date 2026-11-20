@@ -67,7 +67,7 @@ export const api = {
   reviewEntries: (productId, caseVersion) =>
     request(
       "/api/review-entries?" +
-        new URLSearchParams(clean({ product_id: productId, case_version: caseVersion }))
+        new URLSearchParams(clean({ product_id: productId, case_version: caseVersion || undefined }))
     ),
   reviewDetail: (params = {}) =>
     request("/api/review-detail?" + new URLSearchParams(clean(params))),

@@ -20,5 +20,5 @@ import { computed } from "vue";
 import { useRoute } from "vue-router";
 
 const route = useRoute();
-const docMode = computed(() => route.name === "cases");
+const docMode = computed(() => route.name === "cases" || route.name === "case-version-info");
 </script>

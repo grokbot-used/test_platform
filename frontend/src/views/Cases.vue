@@ -16,7 +16,7 @@
               <option v-for="p in products" :key="p.id" :value="String(p.id)">{{ p.name }}</option>
             </select>
           </label>
-          <button class="btn-export" type="button" @click="openCaseInfo">用例信息</button>
+          <button class="btn-export" type="button" @click="openVersionInfo">版本信息</button>
           <label>用例版本
             <select v-model="caseVersion" :disabled="!versions.length" @change="onVersionChange">
               <option v-for="v in versions" :key="v" :value="v">{{ v }}</option>
@@ -153,10 +153,24 @@
             :class="dockClass(ep)"
             @click="openReview(ep.endpoint || ep.id, c)"
           >
-            <span class="dock-name">{{ ep.label }}</span>
+            <span class="dock-name">
+              {{ ep.label }}
+              <span
+                v-if="ep.stale"
+                class="stale-warn"
+                :title="staleTipFor(c)"
+                :aria-label="staleTipFor(c)"
+              >
+                <svg viewBox="0 0 20 20" width="14" height="14" aria-hidden="true">
+                  <path d="M10 2.4 18.4 17.2H1.6L10 2.4z" fill="#FDE68A" stroke="#EAB308" stroke-width="1.2" stroke-linejoin="round"/>
+                  <path d="M10 7.4v5.2" fill="none" stroke="#B45309" stroke-width="1.6" stroke-linecap="round"/>
+                  <circle cx="10" cy="14.4" r="0.85" fill="#B45309"/>
+                </svg>
+              </span>
+            </span>
             <span class="dock-result">{{ ep.result_label || "暂无" }}</span>
-            <span v-if="ep.available && ep.report_version" class="dock-ver">报告 {{ ep.report_version }}</span>
-            <span v-else class="dock-ver">暂无报告</span>
+            <span v-if="ep.available && ep.version" class="dock-ver">{{ ep.version }}</span>
+            <span v-else class="dock-ver">暂无</span>
           </button>
           <button
             type="button"
@@ -187,12 +201,49 @@
             <h2 id="comment-drawer-title">测试执行记录 · {{ commentTitle }}</h2>
           </template>
           <template v-else>
-            <h2 id="review-modal-title">{{ modalTitle }}</h2>
-            <span
-              v-if="modal.data?.result_label"
-              class="tag"
-              :class="'res-' + (modal.data.result || 'empty')"
-            >{{ modal.data.result_label }}</span>
+            <h2 id="review-modal-title">
+              {{ modalTitle }}
+              <span
+                v-if="reviewStale"
+                class="stale-warn"
+                :title="staleTipText"
+                :aria-label="staleTipText"
+              >
+                <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true">
+                  <path d="M10 2.4 18.4 17.2H1.6L10 2.4z" fill="#FDE68A" stroke="#EAB308" stroke-width="1.2" stroke-linejoin="round"/>
+                  <path d="M10 7.4v5.2" fill="none" stroke="#B45309" stroke-width="1.6" stroke-linecap="round"/>
+                  <circle cx="10" cy="14.4" r="0.85" fill="#B45309"/>
+                </svg>
+              </span>
+            </h2>
+            <div v-if="reviewHistory.length" class="review-history" @keydown.esc.stop="historyOpen = false">
+              <button
+                type="button"
+                class="review-history-btn"
+                :aria-expanded="historyOpen ? 'true' : 'false'"
+                aria-haspopup="listbox"
+                @click="historyOpen = !historyOpen"
+              >
+                <span class="mono">{{ currentReviewVersion }}</span>
+                <span class="tag" :class="'res-' + (currentReviewResult || 'empty')">{{ currentReviewResultLabel }}</span>
+                <span class="review-history-caret" aria-hidden="true"></span>
+              </button>
+              <ul v-if="historyOpen" class="review-history-list" role="listbox">
+                <li v-for="item in reviewHistory" :key="item.id">
+                  <button
+                    type="button"
+                    class="review-history-option"
+                    :class="{ active: item.id === currentReviewId }"
+                    role="option"
+                    :aria-selected="item.id === currentReviewId ? 'true' : 'false'"
+                    @click="selectReviewHistory(item)"
+                  >
+                    <span class="mono">{{ item.version }}</span>
+                    <span class="tag" :class="'res-' + (item.result || 'empty')">{{ item.result_label }}</span>
+                  </button>
+                </li>
+              </ul>
+            </div>
           </template>
         </div>
         <button class="btn-close" type="button" @click="closeDrawer">关闭</button>
@@ -287,33 +338,6 @@
       </div>
     </aside>
 
-    <div v-if="infoModal.open" class="review-mask" @wheel.self.prevent @touchmove.self.prevent @click.self="closeCaseInfo">
-      <div class="review-modal" role="dialog" aria-modal="true" aria-labelledby="case-info-title">
-        <header class="modal-hd">
-          <div class="modal-title-row">
-            <h2 id="case-info-title">用例信息</h2>
-          </div>
-          <button class="btn-close" type="button" @click="closeCaseInfo">关闭</button>
-        </header>
-        <div class="modal-body">
-          <iframe
-            v-if="caseInfoPage"
-            class="review-frame review-srcdoc"
-            :srcdoc="caseInfoPage"
-            sandbox="allow-same-origin allow-popups"
-            title="用例信息"
-          ></iframe>
-          <dl v-else-if="caseInfoFields.length" class="review-fields case-info-fields">
-            <template v-for="field in caseInfoFields" :key="field.label">
-              <dt>{{ field.label }}</dt>
-              <dd>{{ field.value }}</dd>
-            </template>
-          </dl>
-          <p v-else class="modal-msg">当前用例文档没有可展示的额外信息</p>
-        </div>
-      </div>
-    </div>
-
     <button
       v-show="showBackTop"
       type="button"
@@ -384,6 +408,7 @@
 
 <script setup>
 import { computed, defineComponent, h, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import { api } from "../api";
 
 const BlockText = defineComponent({
@@ -426,6 +451,18 @@ const ENVIRONMENTS = [
   { key: "overseas_prod", label: "海外正式线", color: "#C2410C", icon: ENV_ICON.overseas_prod },
 ];
 
+const route = useRoute();
+const router = useRouter();
+function staleTip(version) {
+  const ver = String(version || "").trim();
+  return ver
+    ? `最新版用例 ${ver} 部分字段已变更，推演结果可能失真，建议重新推演`
+    : "最新版用例部分字段已变更，推演结果可能失真，建议重新推演";
+}
+function staleTipFor(item) {
+  return staleTip(item?.latest_version);
+}
+
 const products = ref([]);
 const productId = ref("");
 const caseVersion = ref("");
@@ -442,8 +479,8 @@ const selectedId = ref(null);
 const loading = ref(false);
 const error = ref("");
 const modal = ref({ open: false, loading: false, error: "", data: null, endpoint: "" });
+const historyOpen = ref(false);
 const showBackTop = ref(false);
-const infoModal = ref({ open: false });
 const drawer = ref({ open: false, mode: "review" });
 const commentList = ref(null);
 const docScroll = ref(null);
@@ -484,15 +521,23 @@ const selectedCase = computed(() => (doc.value.items || []).find((c) => c.id ===
 
 const modalTitle = computed(() => {
   const d = modal.value.data;
-  if (!d) return "推演详情";
-  const parts = [
-    `${d.label || ""}推演`,
-    d.case_key,
-    d.report_version ? `报告 ${d.report_version}` : null,
-    d.based_on_case_version ? `依据用例 ${d.based_on_case_version}` : null,
-  ].filter(Boolean);
-  return parts.join(" · ");
+  const label = d?.label || ENDPOINT_LABELS[modal.value.endpoint] || "";
+  const key = d?.case_key || selectedCase.value?.key || "";
+  if (!label && !key) return "推演详情";
+  return [label ? `${label}推演` : "推演", key].filter(Boolean).join(" · ");
 });
+
+const reviewHistory = computed(() => modal.value.data?.reviews || []);
+const currentReviewId = computed(() => modal.value.data?.review_id || modal.value.data?.id || null);
+const currentReviewVersion = computed(() => modal.value.data?.version || reviewHistory.value[0]?.version || "");
+const currentReviewResult = computed(() => modal.value.data?.result || reviewHistory.value[0]?.result || "");
+const currentReviewResultLabel = computed(
+  () => modal.value.data?.result_label || reviewHistory.value[0]?.result_label || "未记录"
+);
+const reviewStale = computed(() => Boolean(modal.value.data?.stale));
+const staleTipText = computed(() =>
+  staleTip(modal.value.data?.latest_version || selectedCase.value?.latest_version)
+);
 
 const fragmentPage = computed(() => {
   const pageHtml = modal.value.data?.fragment_page;
@@ -501,10 +546,6 @@ const fragmentPage = computed(() => {
 
 const priorityStats = computed(() => doc.value.priority_stats || { total: 0, priorities: [], untested: 0 });
 const showPriorityStats = computed(() => (priorityStats.value.total || 0) > 0 || (priorityStats.value.untested || 0) > 0);
-
-const caseInfo = computed(() => doc.value.case_info || { available: false, title: "", fields: [], fragment_page: "" });
-const caseInfoPage = computed(() => (typeof caseInfo.value.fragment_page === "string" ? caseInfo.value.fragment_page : ""));
-const caseInfoFields = computed(() => caseInfo.value.fields || []);
 
 const reviewSourceMeta = computed(() => {
   const d = modal.value.data || {};
@@ -524,7 +565,8 @@ function formatPercent(value) {
 const emptyReviewMessage = computed(() => {
   const msg = modal.value.data?.message;
   const text = errorText(msg);
-  return text || "该用例在此端报告中没有推演详情";
+  const label = modal.value.data?.label || ENDPOINT_LABELS[modal.value.endpoint] || "";
+  return text || (label ? `当前用例暂无${label}推演结果` : "当前用例暂无推演结果");
 });
 
 const commentTitle = computed(() => {
@@ -570,14 +612,6 @@ const loupeStyle = computed(() => {
 });
 
 watch(
-  () => infoModal.value.open,
-  () => {
-    syncPageScrollLock();
-    onScroll();
-  }
-);
-
-watch(
   () => drawer.value.open,
   (open) => {
     setDrawerOpen(open);
@@ -613,6 +647,7 @@ function caseEndpoints(c) {
       result: ep.result || "",
       result_label: ep.result_label || (ep.available ? "无详情" : "暂无"),
       found: Boolean(ep.found),
+      stale: Boolean(ep.stale),
     };
   });
 }
@@ -719,8 +754,8 @@ function jumpToPage() {
 function setScrollLocked(locked) {
   const root = document.documentElement;
   if (locked) {
-    // 仅「用例信息」/图片预览/确认框在无抽屉时补偿滚动条；抽屉打开后滚动条改到抽屉左侧，不再加 body padding。
-    const compensate = !drawer.value.open && (infoModal.value.open || lightbox.value.open || confirmDelete.value.open);
+    // 仅图片预览/确认框在无抽屉时补偿滚动条；抽屉打开后滚动条改到抽屉左侧，不再加 body padding。
+    const compensate = !drawer.value.open && (lightbox.value.open || confirmDelete.value.open);
     const gap = compensate ? window.innerWidth - root.clientWidth : 0;
     root.classList.add("modal-open");
     document.body.style.overflow = "hidden";
@@ -734,7 +769,7 @@ function setScrollLocked(locked) {
 
 function syncPageScrollLock() {
   setScrollLocked(Boolean(
-    infoModal.value.open || drawer.value.open || lightbox.value.open || confirmDelete.value.open
+    drawer.value.open || lightbox.value.open || confirmDelete.value.open
   ));
 }
 
@@ -810,7 +845,15 @@ function clearCommentFocus() {
   }
   focusingCommentId.value = null;
 }
+
+function onHistoryPointerDown(event) {
+  if (!historyOpen.value) return;
+  const root = event.target?.closest?.(".review-history");
+  if (!root) historyOpen.value = false;
+}
+
 function closeDrawer() {
+  historyOpen.value = false;
   drawer.value = { open: false, mode: "review" };
   modal.value = { open: false, loading: false, error: "", data: null, endpoint: "" };
   comments.value = { loading: false, error: "", items: [], sending: false };
@@ -919,6 +962,7 @@ async function openComments(caseItem, environment = "") {
   selectedId.value = caseItem.id;
   commentEnvironment.value = environment || "";
   clearCommentFocus();
+  historyOpen.value = false;
   drawer.value = { open: true, mode: "comments" };
   modal.value = { open: false, loading: false, error: "", data: null, endpoint: "" };
   await loadComments(caseItem);
@@ -965,7 +1009,8 @@ async function submitComment() {
 async function openReview(endpoint, caseItem) {
   const current = caseItem || selectedCase.value;
   if (current?.id) selectedId.value = current.id;
-  if (!current || !productId.value || !caseVersion.value || !endpoint) return;
+  if (!current || !productId.value || !endpoint) return;
+  historyOpen.value = false;
   drawer.value = { open: true, mode: "review" };
   modal.value = { open: true, loading: true, error: "", data: null, endpoint };
   try {
@@ -981,16 +1026,35 @@ async function openReview(endpoint, caseItem) {
   }
 }
 
+async function selectReviewHistory(item) {
+  historyOpen.value = false;
+  if (!item?.id || item.id === currentReviewId.value) return;
+  const endpoint = modal.value.endpoint;
+  const current = selectedCase.value;
+  if (!current || !productId.value || !endpoint) return;
+  const previous = modal.value.data;
+  modal.value = { ...modal.value, loading: true, error: "" };
+  try {
+    const data = await api.reviewDetail({
+      product_id: productId.value,
+      endpoint,
+      case_id: current.id,
+      case_version: caseVersion.value,
+      review_id: item.id,
+    });
+    modal.value = { open: true, loading: false, error: "", data, endpoint };
+  } catch (e) {
+    modal.value = { open: true, loading: false, error: errorText(e), data: previous, endpoint };
+  }
+}
+
 function closeModal() {
   closeDrawer();
 }
 
-function openCaseInfo() {
-  infoModal.value = { open: true };
-}
-
-function closeCaseInfo() {
-  infoModal.value = { open: false };
+function openVersionInfo() {
+  const query = productId.value ? { product_id: String(productId.value) } : {};
+  router.push({ name: "case-version-info", query });
 }
 
 function askDeleteComment(item) {
@@ -1160,8 +1224,8 @@ function onKey(e) {
     cancelDeleteComment();
     return;
   }
-  if (infoModal.value.open) {
-    closeCaseInfo();
+  if (historyOpen.value) {
+    historyOpen.value = false;
     return;
   }
   if (drawer.value.open) closeDrawer();
@@ -1212,7 +1276,7 @@ async function exportTable() {
 }
 
 function onScroll() {
-  const overlay = infoModal.value.open || lightbox.value.open || confirmDelete.value.open;
+  const overlay = lightbox.value.open || confirmDelete.value.open;
   showBackTop.value = pageScrollTop() > 240 && !overlay;
 }
 
@@ -1228,12 +1292,15 @@ function scrollToTop() {
 
 onMounted(async () => {
   window.addEventListener("keydown", onKey);
+  window.addEventListener("pointerdown", onHistoryPointerDown, true);
   window.addEventListener("scroll", onScroll, { passive: true });
   onScroll();
   try {
     products.value = await api.products();
     if (products.value.length) {
-      productId.value = String(products.value[0].id);
+      const requested = String(route.query.product_id || "");
+      const match = products.value.find((item) => String(item.id) === requested);
+      productId.value = String((match || products.value[0]).id);
       await reload();
     }
   } catch (e) {
@@ -1243,6 +1310,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   window.removeEventListener("keydown", onKey);
+  window.removeEventListener("pointerdown", onHistoryPointerDown, true);
   window.removeEventListener("scroll", onScroll);
   clearTimeout(qTimer);
   clearCommentFocus();

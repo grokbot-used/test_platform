@@ -41,6 +41,26 @@
       <pre class="pre">{{ cur.expected || "—" }}</pre>
     </div>
     <div class="card block">
+      <h3>各端最新推演</h3>
+      <table class="data" v-if="data.reviews?.length">
+        <thead>
+          <tr><th>端</th><th>版本</th><th>结果</th></tr>
+        </thead>
+        <tbody>
+          <tr v-for="ep in data.reviews" :key="ep.endpoint">
+            <td>{{ ep.label }}</td>
+            <td class="mono">{{ ep.available ? ep.version : "暂无" }}</td>
+            <td>
+              <span class="tag" :class="'res-' + ((ep.available && ep.result) ? ep.result : 'empty')">
+                {{ ep.available ? ep.result_label : "暂无" }}
+              </span>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <div v-else class="empty">当前用例暂无推演结果</div>
+    </div>
+    <div class="card block">
       <h3>关联报告（{{ data.reports.length }}）</h3>
       <table class="data" v-if="data.reports.length">
         <thead>

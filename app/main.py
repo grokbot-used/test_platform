@@ -5,6 +5,7 @@ import shutil
 import uuid
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import markdown
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
@@ -14,9 +15,12 @@ from pydantic import BaseModel, Field
 from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session, joinedload
 
+from app.case_reviews import REVIEW_REPORT_TYPES
 from app.config import FILES_DIR, FRONTEND_DIST
-from app.db import get_db, init_db
+from app.db import get_db, init_db, touch_case
 from app.models import (
+    CaseComment,
+    CaseReview,
     Product,
     Report,
     ReportCaseLink,
@@ -67,6 +71,9 @@ def _startup():
     db = SessionLocal()
     try:
         backfill_based_on_case_versions(db)
+        from app.case_reviews import migrate_review_reports
+
+        migrate_review_reports(db)
     finally:
         db.close()
     threading.Thread(target=backfill_review_details_async, name="review-detail-backfill", daemon=True).start()
@@ -103,6 +110,45 @@ class CaseUpdate(BaseModel):
     preconditions: str = ""
     steps: str = ""
     expected: str = ""
+
+
+class CaseVersionPatch(BaseModel):
+    title: str | None = None
+    module: str | None = None
+    priority: str | None = None
+    client: str | None = None
+    description: str | None = None
+    preconditions: str | None = None
+    steps: str | None = None
+    expected: str | None = None
+
+
+class ReviewIn(BaseModel):
+    case_id: int
+    case_version: str | None = None
+    endpoint: str
+    version: str | None = None
+    result: str | None = None
+    fields: list[Any] | None = None
+    html: str | None = None
+    text: str | None = None
+    heading: str | None = None
+    repo: str | None = None
+    branch: str | None = None
+    participants: str | None = None
+    style_css: str | None = None
+
+
+class ReviewPatch(BaseModel):
+    result: str | None = None
+    fields: list[Any] | None = None
+    html: str | None = None
+    text: str | None = None
+    heading: str | None = None
+    repo: str | None = None
+    branch: str | None = None
+    participants: str | None = None
+    style_css: str | None = None
 
 
 class LinkIn(BaseModel):
@@ -171,19 +217,23 @@ def meta(product_id: int | None = None, db: Session = Depends(get_db)):
     q = db.query(TestCaseVersion.module).filter(TestCaseVersion.module != "")
     pq = db.query(TestCaseVersion.priority).filter(TestCaseVersion.priority != "")
     cq = db.query(TestCaseVersion.client).filter(TestCaseVersion.client != "")
-    rq = db.query(Report.type)
-    vq = db.query(ReportVersion.version)
+    rq = db.query(Report.type).filter(Report.type.notin_(tuple(REVIEW_REPORT_TYPES)))
+    vq = (
+        db.query(ReportVersion.version)
+        .join(Report, ReportVersion.report_id == Report.id)
+        .filter(Report.type.notin_(tuple(REVIEW_REPORT_TYPES)))
+    )
     if product_id:
         q = q.join(TestCase).filter(TestCase.product_id == product_id)
         pq = pq.join(TestCase).filter(TestCase.product_id == product_id)
         cq = cq.join(TestCase).filter(TestCase.product_id == product_id)
         rq = rq.filter(Report.product_id == product_id)
-        vq = vq.join(Report).filter(Report.product_id == product_id)
+        vq = vq.filter(Report.product_id == product_id)
     modules = sorted({r[0] for r in q.distinct().all()})
     priorities = sorted({r[0] for r in pq.distinct().all()})
     clients = sorted({r[0] for r in cq.distinct().all()})
     types = sorted({r[0] for r in rq.distinct().all()})
-    versions = version_sort(list({r[0] for r in vq.distinct().all()}))
+    versions = version_sort(list({r[0] for r in vq.distinct().all() if r[0]}))
     cvq = db.query(TestCaseVersion.version).filter(TestCaseVersion.version != "")
     if product_id:
         cvq = cvq.join(TestCase).filter(TestCase.product_id == product_id)
@@ -249,7 +299,9 @@ def overview(db: Session = Depends(get_db)):
     )
     recent_reports = (
         db.query(ReportVersion)
+        .join(Report, ReportVersion.report_id == Report.id)
         .options(joinedload(ReportVersion.report).joinedload(Report.product))
+        .filter(Report.type.notin_(tuple(REVIEW_REPORT_TYPES)))
         .order_by(ReportVersion.created_at.desc(), ReportVersion.id.desc())
         .limit(8)
         .all()
@@ -438,10 +490,11 @@ def get_case(case_id: int, version: str | None = None, db: Session = Depends(get
         .filter_by(case_id=case.id)
         .all()
     )
-    # prefer links pointing at this case version, but still show others
     reports = []
     for link in links:
         rv = link.report_version
+        if rv.report.type in REVIEW_REPORT_TYPES:
+            continue
         reports.append(
             {
                 "link_id": link.id,
@@ -458,11 +511,16 @@ def get_case(case_id: int, version: str | None = None, db: Session = Depends(get
             }
         )
 
+    from app.case_reviews import latest_reviews_for_case
+
+    reviews = latest_reviews_for_case(db, case.id)
+
     product = db.get(Product, case.product_id)
     return {
         "id": case.id,
         "key": case.key,
         "latest_version": case.latest_version,
+        "updated_at": case.updated_at.isoformat() if case.updated_at else None,
         "product": product_out(product) if product else None,
         "versions": [v.version for v in versions],
         "current": {
@@ -479,6 +537,7 @@ def get_case(case_id: int, version: str | None = None, db: Session = Depends(get
             "source_file": current.source_file,
             "created_at": current.created_at.isoformat() if current.created_at else None,
         },
+        "reviews": reviews,
         "reports": reports,
     }
 
@@ -511,6 +570,49 @@ def add_case_version(case_id: int, body: CaseUpdate, db: Session = Depends(get_d
     return {"id": case.id, "version": cv.version}
 
 
+@app.patch("/api/cases/{case_id}/versions/{version}")
+def patch_case_version(case_id: int, version: str, body: CaseVersionPatch, db: Session = Depends(get_db)):
+    case = db.get(TestCase, case_id)
+    if not case:
+        raise HTTPException(404, "用例不存在")
+    cv = (
+        db.query(TestCaseVersion)
+        .filter_by(case_id=case.id, version=version)
+        .one_or_none()
+    )
+    if not cv:
+        raise HTTPException(404, "该版本不存在")
+    updates = body.model_dump(exclude_unset=True)
+    for key, value in updates.items():
+        setattr(cv, key, value if value is not None else "")
+    if updates:
+        touch_case(case)
+    db.commit()
+    return {"id": case.id, "version": cv.version, "updated_at": case.updated_at.isoformat() if case.updated_at else None}
+
+
+DELETE_DISABLED_DETAIL = "已关闭用例和报告的删除接口。"
+
+IMPORT_DISABLED_DETAIL = (
+    "已关闭 HTML 导入接口。用例请改用 POST /api/cases 与 POST /api/cases/{id}/versions，"
+    "推演请改用 POST /api/reviews。"
+)
+
+
+@app.delete("/api/cases/{case_id}/versions/{version}")
+def delete_case_version(case_id: int, version: str, db: Session = Depends(get_db)):
+    raise HTTPException(410, DELETE_DISABLED_DETAIL)
+
+
+
+
+@app.delete("/api/cases/{case_id}")
+def delete_case(case_id: int, db: Session = Depends(get_db)):
+    raise HTTPException(410, DELETE_DISABLED_DETAIL)
+
+
+
+
 # --------------- reports ---------------
 
 
@@ -530,7 +632,7 @@ def list_reports(
             ReportVersion.report_id == Report.id,
             ReportVersion.version == Report.latest_version,
         ),
-    )
+    ).filter(Report.type.notin_(tuple(REVIEW_REPORT_TYPES)))
     if product_id:
         query = query.filter(Report.product_id == product_id)
     if type:
@@ -765,6 +867,16 @@ def create_link(body: LinkIn, db: Session = Depends(get_db)):
     return {"id": link.id, "updated": False}
 
 
+@app.delete("/api/reports/{report_id}/versions/{version}")
+def delete_report_version(report_id: int, version: str, db: Session = Depends(get_db)):
+    raise HTTPException(410, DELETE_DISABLED_DETAIL)
+
+
+@app.delete("/api/reports/{report_id}")
+def delete_report(report_id: int, db: Session = Depends(get_db)):
+    raise HTTPException(410, DELETE_DISABLED_DETAIL)
+
+
 @app.delete("/api/links/{link_id}")
 def delete_link(link_id: int, db: Session = Depends(get_db)):
     link = db.get(ReportCaseLink, link_id)
@@ -777,108 +889,26 @@ def delete_link(link_id: int, db: Session = Depends(get_db)):
 
 @app.post("/api/imports/cases")
 async def import_cases(
-    product_id: int = Form(...),
+    product_id: int | None = Form(None),
     version: str | None = Form(None),
     key_prefix: str | None = Form(None),
-    file: UploadFile = File(...),
+    file: UploadFile | None = File(None),
     db: Session = Depends(get_db),
 ):
-    product = db.get(Product, product_id)
-    if not product:
-        raise HTTPException(404, "产品不存在")
-    if not file.filename:
-        raise HTTPException(400, "缺少文件名")
-    dest_dir = FILES_DIR / "uploads" / "cases"
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    safe_name = Path(file.filename).name
-    dest = dest_dir / f"{uuid.uuid4().hex[:8]}_{safe_name}"
-    with dest.open("wb") as f:
-        shutil.copyfileobj(file.file, f)
-    prefix = key_prefix or _guess_prefix(product)
-    parsed = parse_file(dest, key_prefix=prefix, kind="case")
-    if not parsed.get("cases"):
-        raise HTTPException(400, "未能从文件中解析出用例")
-    ver = version or parsed.get("version") or "v1.0.0"
-    rel = str(dest.relative_to(FILES_DIR)).replace("\\", "/")
-    count = 0
-    for rec in parsed["cases"]:
-        upsert_case_version(db, product, rec, ver, rel)
-        count += 1
-    db.commit()
-    from app.case_doc_store import persist_case_doc_meta
-
-    persist_case_doc_meta(db, product.id, ver, rel, force=True)
-    return {"imported": count, "version": ver, "source_file": rel}
+    raise HTTPException(410, IMPORT_DISABLED_DETAIL)
 
 
 @app.post("/api/imports/reports")
 async def import_reports(
-    product_id: int = Form(...),
-    type: str = Form(...),
+    product_id: int | None = Form(None),
+    type: str | None = Form(None),
     title: str | None = Form(None),
     version: str | None = Form(None),
     key_prefix: str | None = Form(None),
-    file: UploadFile = File(...),
+    file: UploadFile | None = File(None),
     db: Session = Depends(get_db),
 ):
-    product = db.get(Product, product_id)
-    if not product:
-        raise HTTPException(404, "产品不存在")
-    if not file.filename:
-        raise HTTPException(400, "缺少文件名")
-    dest_dir = FILES_DIR / "uploads" / "reports"
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    safe_name = Path(file.filename).name
-    dest = dest_dir / f"{uuid.uuid4().hex[:8]}_{safe_name}"
-    with dest.open("wb") as f:
-        shutil.copyfileobj(file.file, f)
-    prefix = key_prefix or _guess_prefix(product)
-    parsed = parse_file(dest, key_prefix=prefix, kind="report")
-    ver = version or parsed.get("version") or "v1.0.0"
-    report_title = title or parsed.get("title") or Path(file.filename).stem
-    rel = str(dest.relative_to(FILES_DIR)).replace("\\", "/")
-    from app.parsers import infer_based_on_case_version
-    from app.seed import link_cases
-
-    raw = dest.read_text(encoding="utf-8", errors="replace")
-    available = {
-        r[0]
-        for r in db.query(TestCaseVersion.version)
-        .join(TestCase)
-        .filter(TestCase.product_id == product.id)
-        .distinct()
-        .all()
-    }
-    from app.reviews import snap_to_available
-
-    baseline = snap_to_available(infer_based_on_case_version(raw, safe_name), available)
-    if not baseline and len(available) == 1:
-        baseline = next(iter(available))
-    elif not baseline and ver in available:
-        baseline = ver
-    rv = upsert_report_version(
-        db,
-        product,
-        title=report_title,
-        rtype=type,
-        version=ver,
-        summary=parsed.get("summary") or "",
-        conclusion=parsed.get("conclusion") or "",
-        source_file=rel,
-        based_on_case_version=baseline,
-    )
-    n = link_cases(db, product, rv, parsed.get("links") or [])
-    db.commit()
-    from app.review_store import persist_report_version_details
-
-    persist_report_version_details(db, rv, product, html=raw)
-    return {
-        "report_id": rv.report_id,
-        "version": ver,
-        "links": n,
-        "source_file": rel,
-        "title": report_title,
-    }
+    raise HTTPException(410, IMPORT_DISABLED_DETAIL)
 
 
 def _guess_prefix(product: Product) -> str:
@@ -995,6 +1025,7 @@ def get_case_docs(
                 "key": case.key,
                 "seq": case_seq_from_key(case.key),
                 "version": lv.version,
+                "latest_version": case.latest_version,
                 "version_id": lv.id,
                 "title": lv.title or lv.description,
                 "module": lv.module,
@@ -1035,7 +1066,7 @@ def get_case_docs(
 @app.get("/api/review-entries")
 def get_review_entries(
     product_id: int,
-    case_version: str,
+    case_version: str | None = None,
     db: Session = Depends(get_db),
 ):
     product = db.get(Product, product_id)
@@ -1053,7 +1084,9 @@ def get_review_detail(
     product_id: int,
     endpoint: str,
     case_id: int,
-    case_version: str,
+    case_version: str | None = None,
+    review_id: int | None = None,
+    review_version: str | None = None,
     db: Session = Depends(get_db),
 ):
     product = db.get(Product, product_id)
@@ -1063,11 +1096,61 @@ def get_review_detail(
 
     if endpoint not in ENDPOINT_LABELS:
         raise HTTPException(400, "未知端")
-    data = review_detail(db, product_id, endpoint, case_id, case_version)
+    data = review_detail(
+        db,
+        product_id,
+        endpoint,
+        case_id,
+        case_version,
+        review_id=review_id,
+        review_version=review_version,
+    )
     if data.get("error") == "用例不存在":
         raise HTTPException(404, "用例不存在")
+    if data.get("error") == "推演记录不存在":
+        raise HTTPException(404, "推演记录不存在")
     data["product"] = product_out(product)
     return data
+
+
+@app.get("/api/reviews")
+def get_reviews(
+    case_id: int = Query(...),
+    case_version: str | None = None,
+    endpoint: str | None = None,
+    db: Session = Depends(get_db),
+):
+    from app.case_reviews import list_reviews
+
+    return list_reviews(db, case_id, case_version, endpoint)
+
+
+@app.get("/api/reviews/{review_id}")
+def get_review(review_id: int, db: Session = Depends(get_db)):
+    from app.case_reviews import get_review as _get
+
+    return _get(db, review_id)
+
+
+@app.post("/api/reviews")
+def post_review(body: ReviewIn, db: Session = Depends(get_db)):
+    from app.case_reviews import create_review
+
+    return create_review(db, body.model_dump())
+
+
+@app.patch("/api/reviews/{review_id}")
+def patch_review_api(review_id: int, body: ReviewPatch, db: Session = Depends(get_db)):
+    from app.case_reviews import patch_review
+
+    return patch_review(db, review_id, body.model_dump(exclude_unset=True))
+
+
+@app.delete("/api/reviews/{review_id}")
+def delete_review_api(review_id: int, db: Session = Depends(get_db)):
+    from app.case_reviews import delete_review
+
+    return delete_review(db, review_id)
 
 
 

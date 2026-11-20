@@ -217,6 +217,55 @@ def _heading_matches(
     return any(label in text for label in labels)
 
 
+
+def _collapse_inline(s: str) -> str:
+    s = re.sub(r"[ \t\r\f\v]+", " ", s)
+    s = re.sub(r" *\n *", "\n", s)
+    s = re.sub(r"\s+([，。；：、）】》.,;:)\]）])", r"\1", s)
+    s = re.sub(r"([（【《(\[])\s+", r"\1", s)
+    s = re.sub(r"\n{3,}", "\n\n", s)
+    return s.strip()
+
+
+def _collect_flow(el: Tag) -> str:
+    parts: list[str] = []
+    for child in el.children:
+        if isinstance(child, NavigableString):
+            parts.append(re.sub(r"\s+", " ", str(child)))
+        elif child.name == "br":
+            parts.append("\n")
+        elif child.name in ("ol", "ul", "li"):
+            continue
+        elif child.name in ("p", "div", "section", "blockquote", "h1", "h2", "h3", "h4", "h5", "h6", "tr"):
+            inner = _field_text_from(child)
+            if inner:
+                parts.append("\n" + inner + "\n")
+        else:
+            parts.append(_collect_flow(child))
+    return "".join(parts)
+
+
+def _field_text_from(el: Tag) -> str:
+    lis = el.find_all("li")
+    if lis:
+        items: list[str] = []
+        for i, li in enumerate(lis, 1):
+            t = _collapse_inline(_collect_flow(li))
+            if t:
+                items.append(f"{i}. {t}")
+        return "\n".join(items)
+    return _collapse_inline(_collect_flow(el))
+
+
+def field_text(el: Tag | None) -> str:
+    """Extract case-section text: lists become numbered lines, inline tags stay in-sentence."""
+    if el is None:
+        return ""
+    clone = BeautifulSoup(str(el), "lxml")
+    root = clone.body if clone.body else clone
+    return _field_text_from(root)
+
+
 def _section_value(
     art: Tag,
     labels: tuple[str, ...],
@@ -236,8 +285,8 @@ def _section_value(
             clone = BeautifulSoup(str(section), "lxml")
             for hh in clone.find_all(["h4", "h3", "h5"]):
                 hh.decompose()
-            return text_of(clone)
-        return text_of(body)
+            return field_text(clone)
+        return field_text(body)
     return ""
 
 
@@ -1473,6 +1522,55 @@ def repair_misparsed_card_steps(db) -> int:
                 continue
             version.steps = new_steps
             updated += 1
+    if updated:
+        db.commit()
+    return updated
+
+def repair_case_section_text(db) -> int:
+    """Re-parse source HTML and rewrite preconditions/steps/expected when they differ."""
+    from app.config import FILES_DIR
+    from app.models import TestCase, TestCaseVersion
+
+    rows = (
+        db.query(TestCaseVersion, TestCase)
+        .join(TestCase, TestCase.id == TestCaseVersion.case_id)
+        .filter(TestCaseVersion.source_file.isnot(None))
+        .filter(TestCaseVersion.source_file != "")
+        .all()
+    )
+    if not rows:
+        return 0
+    grouped: dict[str, list] = {}
+    for version, case in rows:
+        grouped.setdefault(version.source_file, []).append((version, case))
+    updated = 0
+    fields = ("preconditions", "steps", "expected")
+    for source_file, group in grouped.items():
+        path = FILES_DIR / source_file
+        if not path.is_file():
+            continue
+        prefix = None
+        first_key = group[0][1].key if group else ""
+        parts = (first_key or "").split("-")
+        if len(parts) >= 3:
+            prefix = "-".join(parts[:-1])
+        by_key = {
+            rec["key"]: rec
+            for rec in parse_case_html(path.read_text(encoding="utf-8"), path.name, key_prefix=prefix).get("cases") or []
+        }
+        for version, case in group:
+            rec = by_key.get(case.key)
+            if not rec:
+                continue
+            changed = False
+            for field in fields:
+                new = rec.get(field) or ""
+                if not new or new == getattr(version, field):
+                    continue
+                setattr(version, field, new)
+                changed = True
+            if changed:
+                updated += 1
     if updated:
         db.commit()
     return updated

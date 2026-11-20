@@ -3,9 +3,8 @@
     <div class="page-hd">
       <div>
         <h1>报告库</h1>
-        <p>黑盒、推演与白盒报告，按产品、类型和版本过滤。</p>
+        <p>黑盒与白盒报告，按产品、类型和版本过滤。</p>
       </div>
-      <router-link class="btn" to="/import">上传报告</router-link>
     </div>
     <div class="filters">
       <input v-model="q" placeholder="搜索标题、结论…" @keyup.enter="load(1)" />

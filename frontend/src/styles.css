@@ -709,7 +709,7 @@ input::placeholder, textarea::placeholder { color: var(--text-secondary); opacit
   box-shadow: var(--shadow-hover);
 }
 .dock-btn:active { transform: scale(0.98); }
-.dock-name { font-size: 12px; font-weight: 600; color: var(--text-secondary); }
+.dock-name { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--text-secondary); }
 .dock-result {
   font-size: 18px;
   font-weight: 700;
@@ -994,6 +994,90 @@ html.drawer-open .doc-scroll {
   line-height: 24px;
   overflow-wrap: anywhere;
   word-break: break-word;
+}
+.review-history {
+  position: relative;
+  flex: 0 0 auto;
+  min-width: 0;
+}
+.review-history-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  margin: 0;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctrl);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  transition: border-color var(--duration) var(--ease), box-shadow var(--duration) var(--ease), background var(--duration) var(--ease);
+}
+.review-history-btn:hover {
+  border-color: #C9D3E0;
+  background: var(--head-bg);
+}
+.review-history-btn:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+.review-history-btn .tag { flex: 0 0 auto; }
+.review-history-caret {
+  width: 0;
+  height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 5px solid var(--text-secondary);
+  transition: transform var(--duration) var(--ease);
+}
+.review-history-btn[aria-expanded="true"] .review-history-caret {
+  transform: rotate(180deg);
+}
+.review-history-list {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 90;
+  min-width: 100%;
+  width: max-content;
+  max-width: min(320px, 70vw);
+  max-height: 240px;
+  margin: 0;
+  padding: 6px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-hover);
+}
+.review-history-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  margin: 0;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--duration) var(--ease);
+}
+.review-history-option:hover,
+.review-history-option.active {
+  background: var(--primary-soft);
+}
+.review-history-option:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
 }
 .drawer-body {
   flex: 1 1 auto;
@@ -1391,4 +1475,160 @@ html.drawer-open .doc-scroll {
 @media (max-width: 800px) {
   .env-node { width: 48px; }
   .env-label { font-size: 9px; line-height: 12px; }
+}
+
+
+.modal-hd h2 {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.stale-warn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  color: #B45309;
+  cursor: help;
+  line-height: 0;
+}
+.stale-warn svg { display: block; }
+
+.version-info-layout {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  gap: 16px;
+  align-items: stretch;
+  min-height: calc(100vh - var(--header-h) - 220px);
+}
+.version-tree-card,
+.version-info-pane {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  min-width: 0;
+}
+.version-tree-card {
+  padding: 16px 12px 20px;
+}
+.version-tree-card h2,
+.version-info-pane-hd h2 {
+  margin: 0;
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 700;
+  color: var(--text);
+}
+.version-tree-card h2 { padding: 0 8px 12px; }
+.version-tree {
+  list-style: none;
+  margin: 0;
+  padding: 0 8px 0 18px;
+  position: relative;
+}
+.version-tree::before {
+  content: "";
+  position: absolute;
+  left: 25px;
+  top: 10px;
+  bottom: 10px;
+  width: 2px;
+  background: var(--border);
+  border-radius: 1px;
+}
+.version-node button {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: 8px;
+  padding: 8px 10px 8px 8px;
+  min-height: 40px;
+  color: var(--text);
+  transition:
+    background var(--duration) var(--ease),
+    border-color var(--duration) var(--ease),
+    box-shadow var(--duration) var(--ease),
+    color var(--duration) var(--ease);
+}
+.version-node button:hover {
+  background: var(--head-bg);
+  border-color: var(--border);
+}
+.version-node.selected button {
+  background: var(--primary-soft);
+  border-color: #BFDBFE;
+  box-shadow: var(--shadow);
+  color: var(--primary);
+  font-weight: 600;
+}
+.version-node .node-dot {
+  position: relative;
+  z-index: 1;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 2px solid #C5CDD8;
+  flex: 0 0 auto;
+  box-shadow: 0 0 0 3px var(--surface);
+  transition: border-color var(--duration) var(--ease), background var(--duration) var(--ease), transform 120ms var(--ease);
+}
+.version-node.selected .node-dot,
+.version-node.latest .node-dot {
+  border-color: var(--primary);
+  background: var(--primary);
+}
+.version-node.selected .node-dot { transform: scale(1.15); }
+.version-node .node-label {
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  line-height: 20px;
+}
+.version-node .node-badge {
+  margin-left: auto;
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 600;
+  color: var(--primary);
+  background: var(--surface);
+  border: 1px solid #BFDBFE;
+  border-radius: var(--radius-pill);
+  padding: 1px 7px;
+}
+.version-info-pane {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 480px;
+}
+.version-info-pane-hd {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+}
+.version-info-pane-body {
+  padding: 16px 20px 22px;
+  overflow: auto;
+  flex: 1;
+  min-height: 0;
+}
+.version-info-frame {
+  height: calc(100vh - var(--header-h) - 280px);
+  min-height: 360px;
+  margin-top: 0;
+}
+
+@media (max-width: 800px) {
+  .version-info-layout {
+    grid-template-columns: 1fr;
+    min-height: 0;
+  }
+  .version-tree::before { left: 21px; }
 }

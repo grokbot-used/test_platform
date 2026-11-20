@@ -25,6 +25,7 @@ class TestCase(Base):
     product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), nullable=False, index=True)
     key: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     latest_version: Mapped[str] = mapped_column(String(32), default="v1.0.0")
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     product: Mapped[Product] = relationship(back_populates="cases")
     versions: Mapped[list["TestCaseVersion"]] = relationship(
@@ -155,4 +156,34 @@ class CaseComment(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
 
     case: Mapped[TestCase] = relationship()
+
+class CaseReview(Base):
+    __tablename__ = "case_reviews"
+    __table_args__ = (
+        UniqueConstraint("case_id", "endpoint", "version", name="uq_case_review_version"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    case_id: Mapped[int] = mapped_column(ForeignKey("test_cases.id"), nullable=False, index=True)
+    case_version_id: Mapped[int | None] = mapped_column(
+        ForeignKey("test_case_versions.id"), nullable=True, index=True
+    )
+    endpoint: Mapped[str] = mapped_column(String(24), nullable=False, index=True)
+    version: Mapped[str] = mapped_column(String(32), nullable=False)
+    result: Mapped[str] = mapped_column(String(24), default="")
+    heading: Mapped[str] = mapped_column(Text, default="")
+    fields_json: Mapped[str] = mapped_column(Text, default="[]")
+    section_html: Mapped[str] = mapped_column(Text, default="")
+    detail_text: Mapped[str] = mapped_column(Text, default="")
+    repo: Mapped[str] = mapped_column(String(1000), default="")
+    branch: Mapped[str] = mapped_column(Text, default="")
+    participants: Mapped[str] = mapped_column(Text, default="")
+    style_css: Mapped[str] = mapped_column(Text, default="")
+    source_report_version_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    source_link_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    content_fingerprint: Mapped[str] = mapped_column(String(96), default="", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
+
+    case: Mapped[TestCase] = relationship()
+    case_version: Mapped[TestCaseVersion | None] = relationship()
 
