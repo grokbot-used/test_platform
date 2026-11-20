@@ -5,7 +5,16 @@ import pytest
 from fastapi import HTTPException, UploadFile
 from starlette.datastructures import Headers
 
-from app.comments import comment_counts, create_comment, delete_comment, list_comments
+from datetime import datetime, timezone
+
+from app.comments import (
+    _fmt_dt,
+    comment_counts,
+    comment_environments,
+    create_comment,
+    delete_comment,
+    list_comments,
+)
 from app.config import FILES_DIR
 from app.db import SessionLocal, init_db
 from app.main import get_case_docs
@@ -67,6 +76,61 @@ def test_case_comments_text_image_and_order():
             delete_comment(db, case.id, second["id"])
         assert missing.value.status_code == 404
         created_ids.remove(second["id"])
+    finally:
+        if created_ids:
+            from shutil import rmtree
+            for cid in created_ids:
+                folder = FILES_DIR / "comments" / str(cid)
+                if folder.exists():
+                    rmtree(folder, ignore_errors=True)
+            db.query(CaseComment).filter(CaseComment.id.in_(created_ids)).delete(synchronize_session=False)
+            db.commit()
+        db.close()
+
+
+def test_comment_time_is_utc_plus_eight():
+    naive_utc = datetime(2026, 11, 20, 7, 0, 0)
+    assert _fmt_dt(naive_utc) == "2026-11-20T15:00:00+08:00"
+    aware_utc = datetime(2026, 11, 20, 7, 0, 0, tzinfo=timezone.utc)
+    assert _fmt_dt(aware_utc) == "2026-11-20T15:00:00+08:00"
+
+
+def test_environment_comment_unique_until_deleted():
+    init_db()
+    db = SessionLocal()
+    created_ids = []
+    try:
+        case = db.query(TestCase).order_by(TestCase.id.asc()).first()
+        assert case is not None
+
+        first = asyncio.run(
+            create_comment(db, case.id, body="测试线记录", environment="test", case_version="v-test")
+        )
+        created_ids.append(first["id"])
+        assert first["environment"] == "test"
+        assert first["environment_label"] == "测试线"
+        assert first["created_at"].endswith("+08:00")
+
+        with pytest.raises(HTTPException) as locked:
+            asyncio.run(create_comment(db, case.id, body="再写一条", environment="test"))
+        assert locked.value.status_code == 409
+
+        general = asyncio.run(create_comment(db, case.id, body="普通记录"))
+        created_ids.append(general["id"])
+        assert general["environment"] == ""
+
+        with pytest.raises(HTTPException) as bad:
+            asyncio.run(create_comment(db, case.id, body="未知环境", environment="staging"))
+        assert bad.value.status_code == 400
+
+        env_map = comment_environments(db, [case.id])
+        assert env_map[case.id]["test"] == first["id"]
+
+        delete_comment(db, case.id, first["id"])
+        created_ids.remove(first["id"])
+        again = asyncio.run(create_comment(db, case.id, body="测试线再记录", environment="test"))
+        created_ids.append(again["id"])
+        assert again["environment"] == "test"
     finally:
         if created_ids:
             from shutil import rmtree

@@ -40,6 +40,13 @@ def init_db():
 
     Base.metadata.create_all(bind=engine)
     migrate_schema()
+    from app.parsers import repair_misparsed_card_steps
+
+    session = SessionLocal()
+    try:
+        repair_misparsed_card_steps(session)
+    finally:
+        session.close()
 
 
 def migrate_schema():
@@ -77,3 +84,14 @@ def migrate_schema():
             for name, decl in link_adds.items():
                 if name not in link_cols:
                     conn.execute(text(f"ALTER TABLE report_case_links ADD COLUMN {name} {decl}"))
+        comment_cols = [row[1] for row in conn.execute(text("PRAGMA table_info(case_comments)"))]
+        if comment_cols and "environment" not in comment_cols:
+            conn.execute(text("ALTER TABLE case_comments ADD COLUMN environment VARCHAR(32) DEFAULT ''"))
+        if comment_cols or "environment" in [row[1] for row in conn.execute(text("PRAGMA table_info(case_comments)"))]:
+            conn.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS ux_case_comments_environment "
+                    "ON case_comments(case_id, environment) "
+                    "WHERE environment IS NOT NULL AND environment != ''"
+                )
+            )

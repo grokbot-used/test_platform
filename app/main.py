@@ -982,9 +982,10 @@ def get_case_docs(
     page_rows = filtered[start : start + page_size]
     ids = [c.id for c, _ in page_rows]
     states = case_endpoint_results(db, product_id, current, ids)
-    from app.comments import comment_counts
+    from app.comments import comment_counts, comment_environments
 
     counts = comment_counts(db, ids)
+    env_map = comment_environments(db, ids)
 
     items = []
     for case, lv in page_rows:
@@ -1005,6 +1006,7 @@ def get_case_docs(
                 "expected": lv.expected,
                 "endpoints": states.get(case.id, []),
                 "comment_count": counts.get(case.id, 0),
+                "env_comments": env_map.get(case.id, {}),
             }
         )
     from app.case_doc_store import get_case_doc_meta
@@ -1082,6 +1084,7 @@ async def post_case_comment(
     case_id: int,
     body: str = Form(""),
     case_version: str | None = Form(None),
+    environment: str | None = Form(None),
     images: list[UploadFile] = File(default=[]),
     db: Session = Depends(get_db),
 ):
@@ -1092,6 +1095,7 @@ async def post_case_comment(
         case_id,
         body=body or "",
         case_version=case_version or "",
+        environment=environment or "",
         images=images,
     )
 

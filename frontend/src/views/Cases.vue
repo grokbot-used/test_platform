@@ -107,6 +107,22 @@
             <span class="num">{{ c.seq || c.key }}</span>
             <span v-if="c.priority" class="tag" :class="'tag-' + (c.priority || '').toLowerCase()">{{ c.priority }}</span>
             <span class="case-title">{{ c.description || c.title || c.key }}</span>
+            <nav class="env-progress" aria-label="环境测试执行记录" @click.stop>
+              <button
+                v-for="env in ENVIRONMENTS"
+                :key="env.key"
+                type="button"
+                class="env-node"
+                :class="{ lit: hasEnvComment(c, env.key), active: isEnvOpen(c, env.key) }"
+                :style="{ '--env-color': env.color }"
+                :title="envButtonTitle(c, env)"
+                :aria-label="envButtonTitle(c, env)"
+                @click="openEnvComments(c, env.key)"
+              >
+                <span class="env-icon" v-html="env.icon"></span>
+                <span class="env-label">{{ env.label }}</span>
+              </button>
+            </nav>
           </header>
           <div class="case-meta">
             <div><span class="k">业务端</span><span class="v">{{ c.client || "—" }}</span></div>
@@ -208,9 +224,25 @@
           <p v-if="comments.loading" class="muted">正在加载测试执行记录…</p>
           <p v-else-if="comments.error" class="err">{{ comments.error }}</p>
           <p v-else-if="!comments.items.length" class="modal-msg">还没有测试执行记录，可以在下方留言或粘贴图片</p>
-          <article v-for="item in comments.items" :key="item.id" class="comment-item">
+          <article
+            v-for="item in comments.items"
+            :key="item.id"
+            class="comment-item"
+            :class="{ 'is-focusing': focusingCommentId === item.id }"
+            :data-comment-id="item.id"
+          >
             <div class="comment-item-hd">
-              <time class="comment-time">{{ formatCommentTime(item.created_at) }}</time>
+              <div class="comment-meta">
+                <span
+                  v-if="item.environment"
+                  class="comment-env"
+                  :style="{ '--env-color': envColor(item.environment) }"
+                >
+                  <span class="comment-env-icon" v-html="envIcon(item.environment)"></span>
+                  {{ item.environment_label || envLabel(item.environment) }}
+                </span>
+                <time class="comment-time">{{ formatCommentTime(item.created_at) }}</time>
+              </div>
               <button type="button" class="comment-delete" :disabled="confirmDelete.deleting" @click="askDeleteComment(item)">删除</button>
             </div>
             <p v-if="item.body" class="comment-body">{{ item.body }}</p>
@@ -227,26 +259,27 @@
             </div>
           </article>
         </div>
-        <form class="comment-composer" @submit.prevent="submitComment">
+        <form class="comment-composer" :class="{ locked: envCommentLocked }" @submit.prevent="submitComment">
+          <p v-if="envCommentLocked" class="composer-hint">该环境已有测试执行记录，删除后可重新评论</p>
           <textarea
             v-model="draftText"
             rows="3"
-            placeholder="输入测试执行记录，可直接粘贴图片"
-            :disabled="comments.sending"
+            :placeholder="composerPlaceholder"
+            :disabled="comments.sending || envCommentLocked"
             @paste="onCommentPaste"
           ></textarea>
           <div v-if="draftImages.length" class="draft-images">
             <div v-for="(img, i) in draftImages" :key="img.url" class="draft-thumb">
               <img :src="img.url" :alt="img.name" />
-              <button type="button" class="draft-remove" @click="removeDraftImage(i)">删除</button>
+              <button type="button" class="draft-remove" :disabled="envCommentLocked" @click="removeDraftImage(i)">删除</button>
             </div>
           </div>
           <div class="composer-actions">
-            <label class="btn-export composer-upload">
+            <label class="btn-export composer-upload" :class="{ disabled: comments.sending || envCommentLocked }">
               添加图片
-              <input type="file" accept="image/*" multiple hidden :disabled="comments.sending" @change="onPickImages" />
+              <input type="file" accept="image/*" multiple hidden :disabled="comments.sending || envCommentLocked" @change="onPickImages" />
             </label>
-            <button class="btn-export composer-send" type="submit" :disabled="!canSendComment || comments.sending">
+            <button class="btn-export composer-send" type="submit" :disabled="!canSendComment || comments.sending || envCommentLocked">
               {{ comments.sending ? "发送中…" : "发送" }}
             </button>
           </div>
@@ -378,6 +411,20 @@ const BlockText = defineComponent({
 
 const ENDPOINT_ORDER = ["backend", "web", "android", "ios"];
 const ENDPOINT_LABELS = { backend: "后端", web: "web", android: "安卓", ios: "ios" };
+const ENV_ICON = {
+  test: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M8 3h4M9 3v4.1L5.1 15.3A2 2 0 0 0 6.9 18h6.2a2 2 0 0 0 1.8-2.7L11 7.1V3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M6.3 13h7.4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>',
+  cn_pre: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4.5 16.5V7.2L10 3.8l5.5 3.4v9.3H4.5z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M8 16.5v-4h4v4M8 8.4h.01M12 8.4h.01M10 11h.01" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>',
+  overseas_pre: '<svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="6.2" fill="none" stroke="currentColor" stroke-width="1.6"/><ellipse cx="10" cy="10" rx="3" ry="6.2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M3.8 10h12.4M5.2 6.7h9.6M5.2 13.3h9.6" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>',
+  cn_prod: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.6 16 5.2v5.1c0 3.3-2.5 5.5-6 6.8-3.5-1.3-6-3.5-6-6.8V5.2L10 2.6z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="m7.3 10.2 2 2.1 3.7-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  overseas_prod: '<svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.6" cy="9.4" r="5.4" fill="none" stroke="currentColor" stroke-width="1.6"/><ellipse cx="8.6" cy="9.4" rx="2.5" ry="5.4" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M3.2 9.4h10.8" stroke="currentColor" stroke-width="1.4"/><path d="m12.2 12.3 1.5 1.6 3.3-3.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+};
+const ENVIRONMENTS = [
+  { key: "test", label: "测试线", color: "#2563EB", icon: ENV_ICON.test },
+  { key: "cn_pre", label: "国内预发布", color: "#7C3AED", icon: ENV_ICON.cn_pre },
+  { key: "overseas_pre", label: "海外预发布", color: "#0891B2", icon: ENV_ICON.overseas_pre },
+  { key: "cn_prod", label: "国内正式线", color: "#059669", icon: ENV_ICON.cn_prod },
+  { key: "overseas_prod", label: "海外正式线", color: "#C2410C", icon: ENV_ICON.overseas_prod },
+];
 
 const products = ref([]);
 const productId = ref("");
@@ -403,6 +450,9 @@ const docScroll = ref(null);
 const comments = ref({ loading: false, error: "", items: [], sending: false });
 const draftText = ref("");
 const draftImages = ref([]);
+const commentEnvironment = ref("");
+const focusingCommentId = ref(null);
+let focusTimer = 0;
 const confirmDelete = ref({ open: false, item: null, deleting: false });
 const lightbox = ref({
   open: false,
@@ -480,10 +530,28 @@ const emptyReviewMessage = computed(() => {
 const commentTitle = computed(() => {
   const c = selectedCase.value;
   if (!c) return "";
-  return `${c.key || ""} ${c.description || c.title || ""}`.trim();
+  const base = `${c.key || ""} ${c.description || c.title || ""}`.trim();
+  const env = envLabel(commentEnvironment.value);
+  return env ? `${base} · ${env}` : base;
 });
 
-const canSendComment = computed(() => Boolean(draftText.value.trim() || draftImages.value.length));
+const envCommentLocked = computed(() => {
+  const key = commentEnvironment.value;
+  if (!key) return false;
+  return comments.value.items.some((item) => item.environment === key);
+});
+
+const canSendComment = computed(() => {
+  if (envCommentLocked.value) return false;
+  return Boolean(draftText.value.trim() || draftImages.value.length);
+});
+
+const composerPlaceholder = computed(() => {
+  if (envCommentLocked.value) return "该环境已有测试执行记录，删除后可重新评论";
+  const label = envLabel(commentEnvironment.value);
+  if (label) return `记录「${label}」的测试执行情况，可直接粘贴图片`;
+  return "输入测试执行记录，可直接粘贴图片";
+});
 
 const lightboxStyle = computed(() => ({
   transform: `translate(${lightbox.value.x}px, ${lightbox.value.y}px) scale(${lightbox.value.scale})`,
@@ -714,10 +782,40 @@ function clearDraftImages() {
   draftImages.value = [];
 }
 
+function envMeta(key) {
+  return ENVIRONMENTS.find((item) => item.key === key) || null;
+}
+function envLabel(key) {
+  return envMeta(key)?.label || "";
+}
+function envColor(key) {
+  return envMeta(key)?.color || "#2563EB";
+}
+function envIcon(key) {
+  return ENV_ICON[key] || "";
+}
+function hasEnvComment(caseItem, key) {
+  return Boolean(caseItem?.env_comments?.[key]);
+}
+function isEnvOpen(caseItem, key) {
+  return isCommentOpen(caseItem) && commentEnvironment.value === key;
+}
+function envButtonTitle(caseItem, env) {
+  return hasEnvComment(caseItem, env.key) ? `${env.label}（已有记录）` : `${env.label}（未记录）`;
+}
+function clearCommentFocus() {
+  if (focusTimer) {
+    clearTimeout(focusTimer);
+    focusTimer = 0;
+  }
+  focusingCommentId.value = null;
+}
 function closeDrawer() {
   drawer.value = { open: false, mode: "review" };
   modal.value = { open: false, loading: false, error: "", data: null, endpoint: "" };
   comments.value = { loading: false, error: "", items: [], sending: false };
+  commentEnvironment.value = "";
+  clearCommentFocus();
   draftText.value = "";
   clearDraftImages();
   cancelDeleteComment();
@@ -739,8 +837,17 @@ async function scrollCommentsToBottom() {
 function formatCommentTime(value) {
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return value || "";
-  const pad = (n) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(d);
+  const pick = (type) => parts.find((part) => part.type === type)?.value || "";
+  return `${pick("year")}-${pick("month")}-${pick("day")} ${pick("hour")}:${pick("minute")}`;
 }
 
 function addDraftImages(files) {
@@ -765,6 +872,7 @@ function onPickImages(e) {
 }
 
 function onCommentPaste(e) {
+  if (envCommentLocked.value) return;
   const items = e.clipboardData?.items || [];
   const files = [];
   for (const item of items) {
@@ -789,21 +897,50 @@ async function loadComments(caseItem) {
   }
 }
 
-async function openComments(caseItem) {
+async function focusComment(commentId) {
+  await nextTick();
+  requestAnimationFrame(() => {
+    const el = commentList.value?.querySelector(`[data-comment-id="${commentId}"]`);
+    if (el) el.scrollIntoView({ block: "center", behavior: "smooth" });
+    focusingCommentId.value = null;
+    requestAnimationFrame(() => {
+      focusingCommentId.value = commentId;
+    });
+    if (focusTimer) clearTimeout(focusTimer);
+    focusTimer = setTimeout(() => {
+      if (focusingCommentId.value === commentId) focusingCommentId.value = null;
+      focusTimer = 0;
+    }, 3000);
+  });
+}
+
+async function openComments(caseItem, environment = "") {
   if (!caseItem?.id) return;
   selectedId.value = caseItem.id;
+  commentEnvironment.value = environment || "";
+  clearCommentFocus();
   drawer.value = { open: true, mode: "comments" };
   modal.value = { open: false, loading: false, error: "", data: null, endpoint: "" };
   await loadComments(caseItem);
+  if (!environment) return;
+  const existingId =
+    caseItem.env_comments?.[environment] ||
+    comments.value.items.find((item) => item.environment === environment)?.id;
+  if (existingId) await focusComment(existingId);
+}
+
+async function openEnvComments(caseItem, environment) {
+  await openComments(caseItem, environment);
 }
 
 async function submitComment() {
   const current = selectedCase.value;
-  if (!current?.id || !canSendComment.value || comments.value.sending) return;
+  if (!current?.id || !canSendComment.value || comments.value.sending || envCommentLocked.value) return;
   comments.value = { ...comments.value, sending: true, error: "" };
   const form = new FormData();
   form.append("body", draftText.value.trim());
   if (caseVersion.value) form.append("case_version", caseVersion.value);
+  if (commentEnvironment.value) form.append("environment", commentEnvironment.value);
   for (const item of draftImages.value) form.append("images", item.file, item.name);
   try {
     const created = await api.createComment(current.id, form);
@@ -814,6 +951,9 @@ async function submitComment() {
       sending: false,
     };
     current.comment_count = (current.comment_count || 0) + 1;
+    if (created.environment) {
+      current.env_comments = { ...(current.env_comments || {}), [created.environment]: created.id };
+    }
     draftText.value = "";
     clearDraftImages();
     await scrollCommentsToBottom();
@@ -878,6 +1018,11 @@ async function confirmDeleteComment() {
       error: "",
     };
     current.comment_count = Math.max(0, (current.comment_count || 0) - 1);
+    if (item.environment && current.env_comments) {
+      const next = { ...current.env_comments };
+      if (next[item.environment] === item.id) delete next[item.environment];
+      current.env_comments = next;
+    }
     confirmDelete.value = { open: false, item: null, deleting: false };
     syncPageScrollLock();
   } catch (e) {
@@ -1100,6 +1245,7 @@ onUnmounted(() => {
   window.removeEventListener("keydown", onKey);
   window.removeEventListener("scroll", onScroll);
   clearTimeout(qTimer);
+  clearCommentFocus();
   setScrollLocked(false);
   setDrawerOpen(false);
   clearDraftImages();

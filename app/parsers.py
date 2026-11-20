@@ -200,20 +200,44 @@ def _meta_value(art: Tag, label: str) -> str:
     return ""
 
 
-def _section_value(art: Tag, labels: tuple[str, ...]) -> str:
+def _heading_matches(
+    heading: str,
+    labels: tuple[str, ...],
+    *,
+    exact: bool = False,
+    exclude: tuple[str, ...] = (),
+) -> bool:
+    text = (heading or "").strip()
+    if not text:
+        return False
+    if any(token in text for token in exclude):
+        return False
+    if exact:
+        return text in labels
+    return any(label in text for label in labels)
+
+
+def _section_value(
+    art: Tag,
+    labels: tuple[str, ...],
+    *,
+    exact: bool = False,
+    exclude: tuple[str, ...] = (),
+) -> str:
     for section in art.select(".case-grid section, section"):
         h = section.find(["h4", "h3", "h5"])
         if not h:
             continue
         ht = h.get_text(strip=True)
-        if any(lab in ht for lab in labels):
-            body = section.select_one(".steps") or section
-            if body is section:
-                clone = BeautifulSoup(str(section), "lxml")
-                for hh in clone.find_all(["h4", "h3", "h5"]):
-                    hh.decompose()
-                return text_of(clone)
-            return text_of(body)
+        if not _heading_matches(ht, labels, exact=exact, exclude=exclude):
+            continue
+        body = section.select_one(".steps") or section
+        if body is section:
+            clone = BeautifulSoup(str(section), "lxml")
+            for hh in clone.find_all(["h4", "h3", "h5"]):
+                hh.decompose()
+            return text_of(clone)
+        return text_of(body)
     return ""
 
 
@@ -240,9 +264,11 @@ def _parse_case_card(art: Tag, key_prefix: str | None) -> dict | None:
         "priority": (priority or "").upper(),
         "client": client.lower() if client else "",
         "description": description,
-        "preconditions": _section_value(art, ("前置",)),
-        "steps": _section_value(art, ("操作步骤", "步骤")),
-        "expected": _section_value(art, ("预期结果", "预期")),
+        "preconditions": _section_value(art, ("前置步骤", "前置条件"), exact=True)
+        or _section_value(art, ("前置",)),
+        "steps": _section_value(art, ("操作步骤",), exact=True)
+        or _section_value(art, ("步骤",), exact=True, exclude=("前置",)),
+        "expected": _section_value(art, ("预期结果",), exact=True) or _section_value(art, ("预期",)),
     }
 
 
@@ -1401,3 +1427,52 @@ def extract_report_header_meta(html: str) -> dict:
         if found["repo"] and found["branch"] and found["participants"]:
             break
     return found
+
+def repair_misparsed_card_steps(db) -> int:
+    """Rewrite steps only when the stored value was copied from preconditions."""
+    from app.config import FILES_DIR
+    from app.models import TestCase, TestCaseVersion
+
+    rows = (
+        db.query(TestCaseVersion, TestCase)
+        .join(TestCase, TestCase.id == TestCaseVersion.case_id)
+        .filter(TestCaseVersion.steps == TestCaseVersion.preconditions)
+        .filter(TestCaseVersion.steps != "")
+        .all()
+    )
+    if not rows:
+        return 0
+    grouped: dict[str, list] = {}
+    for version, case in rows:
+        if version.source_file:
+            grouped.setdefault(version.source_file, []).append((version, case))
+    parsed_cache: dict[str, dict[str, dict]] = {}
+    updated = 0
+    for source_file, group in grouped.items():
+        path = FILES_DIR / source_file
+        if not path.is_file():
+            continue
+        if source_file not in parsed_cache:
+            html = path.read_text(encoding="utf-8")
+            prefix = None
+            first_key = group[0][1].key if group else ""
+            parts = (first_key or "").split("-")
+            if len(parts) >= 3:
+                prefix = "-".join(parts[:-1])
+            parsed_cache[source_file] = {
+                rec["key"]: rec
+                for rec in parse_case_html(html, path.name, key_prefix=prefix).get("cases") or []
+            }
+        by_key = parsed_cache[source_file]
+        for version, case in group:
+            rec = by_key.get(case.key)
+            if not rec:
+                continue
+            new_steps = rec.get("steps") or ""
+            if not new_steps or new_steps == version.steps:
+                continue
+            version.steps = new_steps
+            updated += 1
+    if updated:
+        db.commit()
+    return updated

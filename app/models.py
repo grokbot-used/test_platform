@@ -151,6 +151,7 @@ class CaseComment(Base):
     case_version: Mapped[str] = mapped_column(String(32), default="")
     body: Mapped[str] = mapped_column(Text, default="")
     images_json: Mapped[str] = mapped_column(Text, default="[]")
+    environment: Mapped[str] = mapped_column(String(32), default="", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
 
     case: Mapped[TestCase] = relationship()
