@@ -53,11 +53,11 @@ SQLite 库和评论图片在容器内的 `/app/data`（`platform.db`、`files/`�
 
 ```bash
 # 加载镜像
-docker load -i test_platform-0.1.8.tar
+docker load -i test_platform-0.1.9.tar
 
 # 启动：把本地 data 挂进容器（-d 后台运行；容器内仍监听 8080，宿主机映射 7000）
 mkdir C:\Users\admin\test_platform
-docker run -d --rm -p 7000:8080 -v C:\Users\admin\test_platform\data:/app/data test_platform:0.1.8
+docker run -d --rm -p 7000:8080 -v C:\Users\admin\test_platform\data:/app/data test_platform:0.1.9
 ```
 
 浏览器打开 <http://127.0.0.1:7000>。

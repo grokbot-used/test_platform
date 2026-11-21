@@ -23,7 +23,7 @@ from app.models import (
     TestCase,
     TestCaseVersion,
 )
-from app.parsers import apply_review_table_keep_list, build_fragment_page
+from app.parsers import REVIEW_CARD_CSS, build_fragment_page, build_review_detail_view
 from app.reviews import ENDPOINT_LABELS, ENDPOINTS, RESULT_LABELS, classify_report_endpoints, version_key
 
 log = logging.getLogger(__name__)
@@ -183,15 +183,25 @@ def _resolve_case_version(db: Session, case_id: int, version: str) -> tuple[Test
     return case, cv
 
 
-def _payload_body(row: CaseReview, case_key: str) -> dict:
+def _payload_body(row: CaseReview, case_key: str, fallback_title: str = "") -> dict:
     fields = _load_fields(row.fields_json)
-    section_html, fields = apply_review_table_keep_list(row.section_html or "", fields)
-    heading = row.heading or ""
+    result = row.result or ""
+    result_label = RESULT_LABELS.get(result, result or "未记录") if result else ""
+    section_html, fields, heading = build_review_detail_view(
+        row.section_html or "",
+        fields,
+        heading=row.heading or "",
+        text=row.detail_text or "",
+        result=result,
+        result_label=result_label,
+        fallback_title=fallback_title or "",
+    )
+    css_parts = [part for part in ((row.style_css or "").strip(), REVIEW_CARD_CSS.strip()) if part]
     return {
         "heading": heading,
         "fields": fields,
         "html": section_html,
-        "fragment_page": build_fragment_page(section_html, row.style_css or "", title=heading or case_key),
+        "fragment_page": build_fragment_page(section_html, "\n".join(css_parts), title=heading or case_key),
         "text": row.detail_text or "",
         "repo": row.repo or "",
         "branch": row.branch or "",
@@ -322,7 +332,7 @@ def review_out(row: CaseReview, *, include_body: bool = True, current_fingerprin
         "stale": is_review_stale(row, current_fingerprint, case=case),
     }
     if include_body:
-        item.update(_payload_body(row, case_key))
+        item.update(_payload_body(row, case_key, fallback_title=cv.title if cv else ""))
     return item
 
 
@@ -710,7 +720,7 @@ def review_detail(
         base["message"] = EMPTY_MESSAGE.format(label=ENDPOINT_LABELS[endpoint])
         return base
 
-    body = _payload_body(chosen, case.key)
+    body = _payload_body(chosen, case.key, fallback_title=(cv.title if cv else ""))
     base.update(body)
     base["found"] = bool(body.get("html") or body.get("text") or body.get("fields"))
     base["created_at"] = _fmt_dt(chosen.created_at)

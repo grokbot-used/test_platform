@@ -11,8 +11,9 @@ from sqlalchemy.orm import Session, joinedload
 from app.config import FILES_DIR
 from app.models import Product, Report, ReportCaseLink, ReportVersion, TestCase
 from app.parsers import (
-    apply_review_table_keep_list,
+    REVIEW_CARD_CSS,
     build_fragment_page,
+    build_review_detail_view,
     extract_report_case_detail,
     extract_report_header_meta,
     extract_style_text_from_raw,
@@ -95,16 +96,24 @@ def payload_from_link(link: ReportCaseLink, css: str, case_key: str) -> dict:
         fields = json.loads(link.fields_json or "[]")
     except json.JSONDecodeError:
         fields = []
-    section_html, fields = apply_review_table_keep_list(link.section_html or "", fields)
-    heading = link.heading or ""
+    result = link.result or ""
+    section_html, fields, heading = build_review_detail_view(
+        link.section_html or "",
+        fields,
+        heading=link.heading or "",
+        text=link.detail_text or "",
+        result=result,
+        fallback_title=case_key or "",
+    )
+    css_parts = [part for part in ((css or "").strip(), REVIEW_CARD_CSS.strip()) if part]
     return {
         "found": bool(section_html),
         "anchor": link.anchor or "",
         "html": section_html,
-        "fragment_page": build_fragment_page(section_html, css or "", title=heading or case_key),
+        "fragment_page": build_fragment_page(section_html, "\n".join(css_parts), title=heading or case_key),
         "text": link.detail_text or "",
         "fields": fields,
-        "result": link.result or "",
+        "result": result,
         "heading": heading,
     }
 

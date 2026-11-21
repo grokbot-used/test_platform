@@ -275,7 +275,9 @@ def test_review_crud_conflict_and_case_delete_cascade():
         patched = patch_review(db, created["id"], {"result": "blocked", "text": "updated"})
         assert patched["result"] == "blocked"
         assert patched["text"] == "updated"
-        assert patched["html"] == "<p>one</p>"
+        assert "one" in (patched["html"] or "")
+        assert "review-card" in (patched["html"] or "")
+        assert [f["label"] for f in patched["fields"]] == ["推演链路", "推演结果", "不通过原因", "备注"]
         assert patched["version"] == "v0.0.1"
         assert patched["endpoint"] == "backend"
 
@@ -387,7 +389,9 @@ def test_production_migration_idempotent_and_history_sample():
         assert gma_detail["available"] is True
         assert gma_detail["found"] is True
         labels = [f["label"] for f in gma_detail["fields"]]
-        assert "后端链路" in labels
+        assert "推演链路" in labels
+        assert "后端链路" not in labels
+        assert "用例标题" not in labels
         assert comments_before == db.query(CaseComment).count()
 
         # case body not clobbered

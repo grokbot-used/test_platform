@@ -1265,6 +1265,452 @@ def apply_review_table_keep_list(section_html: str, fields: list | None = None) 
     return html.strip(), kept_fields
 
 
+REVIEW_DETAIL_FIELD_NAMES = ("推演链路", "推演结果", "不通过原因", "备注")
+REVIEW_EMPTY_VALUE = "—"
+
+REVIEW_CARD_CSS = """
+section.case, .review-card {
+  background:#FFFFFF;border:1px solid #E4E8EE;border-radius:12px;
+  box-shadow:0 1px 2px rgba(16,24,40,.06),0 1px 3px rgba(16,24,40,.08);
+  margin:0;padding:0;overflow:hidden;
+}
+section.case[data-result="不通过"], .review-card[data-result="不通过"] {
+  border-color:#FECACA;border-left:4px solid #F87171;
+}
+section.case[data-result="跳过"], .review-card[data-result="跳过"],
+section.case[data-result="不测"], .review-card[data-result="不测"] {
+  border-color:#FDBA74;border-left:4px solid #F59E0B;
+}
+section.case[data-result="通过"], .review-card[data-result="通过"] {
+  border-left:4px solid #86EFAC;
+}
+section.case h3, .review-card h3, .review-card-title {
+  margin:0;padding:12px 16px;font-size:15px;line-height:22px;font-weight:700;
+  background:#F8FAFC;border-bottom:1px solid #E4E8EE;
+  overflow-wrap:anywhere;word-break:break-word;
+}
+section.case[data-result="不通过"] h3, .review-card[data-result="不通过"] h3,
+.review-card[data-result="不通过"] .review-card-title { background:#FEF2F2; }
+section.case[data-result="跳过"] h3, section.case[data-result="不测"] h3,
+.review-card[data-result="跳过"] h3, .review-card[data-result="不测"] h3,
+.review-card[data-result="跳过"] .review-card-title,
+.review-card[data-result="不测"] .review-card-title { background:#FFF7ED; }
+.review-card table, section.case table, .review-card-table {
+  border-collapse:collapse;width:100%;margin:0;table-layout:fixed;
+}
+.review-card th, .review-card td, section.case th, section.case td,
+.review-card-table th, .review-card-table td {
+  border:1px solid #E4E8EE;padding:8px 10px;vertical-align:top;text-align:left;
+  overflow-wrap:anywhere;word-break:break-word;
+}
+.review-card th, section.case th, .review-card-table th {
+  width:140px;background:#F6F7F9;color:#1A2332;font-weight:600;
+}
+.review-card tr:last-child th, .review-card tr:last-child td,
+section.case tr:last-child th, section.case tr:last-child td,
+.review-card-table tr:last-child th, .review-card-table tr:last-child td { border-bottom:0; }
+.review-card th, .review-card td, section.case th, section.case td,
+.review-card-table th, .review-card-table td { border-left:0;border-right:0; }
+.review-card .ok, section.case .ok { color:#0a7a2f;font-weight:600; }
+.review-card .fail, section.case .fail { color:#b00020;font-weight:600; }
+.review-card .skip, section.case .skip { color:#b45309;font-weight:600; }
+.review-card code, section.case code {
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  font-size:12px;background:#EEF2F7;padding:1px 6px;border-radius:4px;
+}
+"""
+
+_DETAIL_LABEL_RE = (
+    r"不通过/跳过原因|不通过原因|跳过原因|备注/证据|"
+    r"推演链路|后端链路|前端链路|APP链路|安卓链路|iOS链路|ios链路|链路推演|"
+    r"推演结果|用例标题|推演用例编号|备注|标题"
+)
+_LINE_LABEL_RE = re.compile(
+    rf"^\s*(?:\*\*|__)?(?P<label>{_DETAIL_LABEL_RE})(?:\*\*|__)?\s*[:：]?\s*(?P<rest>.*)$"
+)
+_BACKTICK_RE = re.compile(r"`([^`]+)`")
+_HTML_TAG_RE = re.compile(r"<[a-zA-Z][^>]*>")
+
+
+def _canonical_review_kind(label: str) -> str | None:
+    text = _normalize_meta_label(label)
+    if not text:
+        return None
+    if text in {
+        "推演链路",
+        "后端链路",
+        "前端链路",
+        "APP链路",
+        "安卓链路",
+        "iOS链路",
+        "ios链路",
+    } or text.startswith("链路推演"):
+        return "推演链路"
+    if text == "推演结果":
+        return "推演结果"
+    if (
+        text.startswith("不通过原因")
+        or text.startswith("不通过/跳过原因")
+        or text == "跳过原因"
+        or text.startswith("跳过原因")
+    ):
+        return "不通过原因"
+    if text == "备注" or text == "备注/证据" or text.startswith("备注"):
+        return "备注"
+    if text in {"用例标题", "标题"} or text.startswith("用例标题"):
+        return "_title"
+    return None
+
+
+def _is_empty_review_value(text: str) -> bool:
+    value = (text or "").strip()
+    return (not value) or value == REVIEW_EMPTY_VALUE
+
+
+def _text_to_html(text: str) -> str:
+    raw = text or ""
+    if _is_empty_review_value(raw):
+        return ""
+    escaped = html_lib.escape(raw).replace("\r\n", "\n").replace("\r", "\n")
+    escaped = escaped.replace("\n", "<br/>\n")
+    return _BACKTICK_RE.sub(r"<code>\1</code>", escaped)
+
+
+def _inner_html_value(raw: str) -> str:
+    html = (raw or "").strip()
+    if not html:
+        return ""
+    soup = BeautifulSoup(html, "lxml")
+    root = soup.body or soup
+    for tag in root.find_all(["script", "style"]):
+        tag.decompose()
+
+    def _cell_inner(cell: Tag) -> str:
+        return cell.decode_contents().strip() if hasattr(cell, "decode_contents") else text_of(cell)
+
+    start = html.lstrip().lower()
+    cell = None
+    if start.startswith("<td") or start.startswith("<th"):
+        cell = root.find(["td", "th"])
+    if cell is None:
+        children = [
+            child
+            for child in list(root.children)
+            if getattr(child, "name", None) or str(child).strip()
+        ]
+        if len(children) == 1 and getattr(children[0], "name", None) in {"td", "th"}:
+            cell = children[0]
+        elif len(children) == 1 and getattr(children[0], "name", None) == "table":
+            tds = children[0].find_all(["td", "th"], recursive=True)
+            if len(tds) == 1:
+                cell = tds[0]
+    if cell is not None:
+        return _cell_inner(cell)
+    if hasattr(root, "decode_contents"):
+        return root.decode_contents().strip()
+    return html
+
+
+def _field_text_and_html(item: dict | None = None, value_el: Tag | None = None, text: str = "", html: str = "") -> tuple[str, str]:
+    if item and isinstance(item, dict):
+        html = str(item.get("value_html") or html or "")
+        text = str(item.get("value_text") or item.get("value") or text or "")
+        if html.strip():
+            html = _inner_html_value(html)
+            if not text.strip():
+                text = text_of(BeautifulSoup(html, "lxml"))
+        elif text.strip():
+            html = _text_to_html(text)
+        return text.strip(), html
+    if value_el is not None:
+        html = _inner_html_value(str(value_el))
+        text = text_of(value_el)
+        return (text or "").strip(), html
+    if html and _HTML_TAG_RE.search(html):
+        html = _inner_html_value(html)
+        if not text:
+            text = text_of(BeautifulSoup(html, "lxml"))
+        return (text or "").strip(), html
+    text = (text or "").strip()
+    return text, _text_to_html(text)
+
+
+def _remember_review_value(store: dict, kind: str | None, text: str, html: str) -> None:
+    value_text = (text or "").strip()
+    value_html = (html or "").strip()
+    if kind == "_title":
+        if value_text and "_title" not in store:
+            store["_title"] = value_text
+        return
+    if kind not in REVIEW_DETAIL_FIELD_NAMES:
+        return
+    current = store.get(kind)
+    if current and not _is_empty_review_value(current.get("value_text") or ""):
+        return
+    store[kind] = {
+        "label": kind,
+        "value_text": value_text,
+        "value_html": value_html,
+        "value": value_text,
+    }
+
+
+def _collect_fields_from_items(store: dict, fields: list | None) -> None:
+    for item in fields or []:
+        if not isinstance(item, dict):
+            continue
+        kind = _canonical_review_kind(str(item.get("label") or ""))
+        text, html = _field_text_and_html(item)
+        _remember_review_value(store, kind, text, html)
+
+
+def _collect_fields_from_html(store: dict, section_html: str) -> str:
+    heading = ""
+    html = section_html or ""
+    if not html.strip() or not _HTML_TAG_RE.search(html):
+        return heading
+    soup = BeautifulSoup(html, "lxml")
+    root = soup.body or soup
+    head = root.find(["h2", "h3", "h4", "header"])
+    if head:
+        heading = text_of(head)
+    for tr in root.find_all("tr"):
+        cells = tr.find_all(["th", "td"])
+        if len(cells) < 2:
+            continue
+        kind = _canonical_review_kind(text_of(cells[0]))
+        text, html = _field_text_and_html(value_el=cells[1])
+        _remember_review_value(store, kind, text, html)
+    for field in root.select(".field"):
+        k = field.select_one(".k") or field.find(["dt", "th", "strong", "b"])
+        v = field.select_one(".v") or field.find(["dd", "td"])
+        if k is None:
+            continue
+        kind = _canonical_review_kind(text_of(k))
+        if v is not None:
+            text, html = _field_text_and_html(value_el=v)
+        else:
+            clone = BeautifulSoup(str(field), "lxml")
+            node = clone.body or clone
+            label_el = node.select_one(".k") or node.find(["dt", "th", "strong", "b"])
+            if label_el:
+                label_el.decompose()
+            text, html = _field_text_and_html(text=text_of(node), html=_clean_fragment(node))
+        _remember_review_value(store, kind, text, html)
+    return heading
+
+
+def _collect_fields_from_prose(store: dict, source: str) -> None:
+    if not (source or "").strip():
+        return
+    work = source
+    if "<" in work:
+        work = re.sub(r"(?i)<br\s*/?>", "\n", work)
+        work = re.sub(r"(?i)</(p|div|li|h[1-6]|tr|section|article)>", "\n", work)
+        work = re.sub(r"(?i)<(p|div|li|h[1-6]|tr|section|article)[^>]*>", "", work)
+        work = re.sub(r"(?i)</?(strong|b|em|span|font)[^>]*>", "", work)
+        work = BeautifulSoup(work, "lxml").get_text("\n")
+    lines = work.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    current: str | None = None
+    buf: list[str] = []
+
+    def flush() -> None:
+        nonlocal current, buf
+        if current:
+            value = "\n".join(buf).strip().lstrip("：:").strip()
+            _remember_review_value(store, current, value, _text_to_html(value))
+        current = None
+        buf = []
+
+    for line in lines:
+        raw = line.strip()
+        m = _LINE_LABEL_RE.match(raw)
+        if m:
+            kind = _canonical_review_kind(m.group("label"))
+            flush()
+            current = kind
+            rest = (m.group("rest") or "").strip()
+            buf = [rest] if rest else []
+            continue
+        if current and not buf and raw[:1] in {":", "："}:
+            rest = raw.lstrip("：:").strip()
+            if rest:
+                buf = [rest]
+            continue
+        if current:
+            buf.append(line)
+    flush()
+
+
+def _result_mark(result: str, result_label: str, field_text: str) -> str:
+    blob = f"{result} {result_label} {field_text}"
+    if result == "fail" or "不通过" in blob or "失败" in blob:
+        return "不通过"
+    if result in {"skip", "untested"} or "跳过" in blob or "不测" in blob:
+        return "跳过"
+    if result == "pass" or "通过" in blob:
+        return "通过"
+    return (result_label or result or "").strip()
+
+
+def _result_cell_class(mark: str) -> str:
+    if mark == "不通过":
+        return "fail"
+    if mark in {"跳过", "不测"}:
+        return "skip"
+    if mark == "通过":
+        return "ok"
+    return ""
+
+
+def _build_review_card_html(heading: str, fields: list[dict], result_mark: str) -> str:
+    title = html_lib.escape(heading or "推演详情")
+    mark_attr = html_lib.escape(result_mark, quote=True)
+    rows = []
+    for item in fields:
+        label = html_lib.escape(item["label"])
+        raw_html = (item.get("value_html") or "").strip()
+        text = (item.get("value_text") or item.get("value") or "").strip()
+        if raw_html and not _is_empty_review_value(text):
+            cell = raw_html
+        elif not _is_empty_review_value(text):
+            cell = _text_to_html(text)
+        else:
+            cell = REVIEW_EMPTY_VALUE
+            text = REVIEW_EMPTY_VALUE
+        css = ""
+        if item["label"] == "推演结果":
+            klass = _result_cell_class(result_mark or _result_mark("", "", text))
+            if klass:
+                css = f' class="{klass}"'
+        elif item["label"] == "推演链路" and cell != REVIEW_EMPTY_VALUE:
+            css = ' class="chain"'
+        rows.append(f"<tr><th>{label}</th><td{css}>{cell}</td></tr>")
+    body = "\n".join(rows)
+    return (
+        f'<section class="case review-card" data-result="{mark_attr}">'
+        f"<h3>{title}</h3>"
+        f"<table class=\"review-card-table\">\n{body}\n</table>"
+        "</section>"
+    )
+
+
+def _source_has_review_labels(source: str) -> bool:
+    if not (source or "").strip():
+        return False
+    if "<" in source:
+        soup = BeautifulSoup(source, "lxml")
+        root = soup.body or soup
+        for tr in root.find_all("tr"):
+            cells = tr.find_all(["th", "td"])
+            if cells and _canonical_review_kind(text_of(cells[0])):
+                return True
+        for field in root.select(".field"):
+            k = field.select_one(".k") or field.find(["dt", "th", "strong", "b"])
+            if k and _canonical_review_kind(text_of(k)):
+                return True
+        probe = text_of(root)
+    else:
+        probe = source
+    return any(_LINE_LABEL_RE.match(line.strip()) for line in probe.splitlines())
+
+
+def _collect_unlabeled_body(store: dict, section_html: str, text: str) -> None:
+    """If 推演链路 is empty and the body has no field labels, use it as the chain."""
+    current = store.get("推演链路") or {}
+    if not _is_empty_review_value(current.get("value_text") or ""):
+        return
+    if _source_has_review_labels(section_html) or _source_has_review_labels(text):
+        return
+    html = (section_html or "").strip()
+    value_text = ""
+    value_html = ""
+    if html:
+        soup = BeautifulSoup(html, "lxml")
+        root = soup.body or soup
+        for head in root.find_all(["h2", "h3", "h4", "header"]):
+            head.decompose()
+        value_text = text_of(root).strip()
+        value_html = root.decode_contents().strip() if hasattr(root, "decode_contents") else html
+        if value_html:
+            value_html = _inner_html_value(value_html)
+    if _is_empty_review_value(value_text) and (text or "").strip():
+        value_text = text.strip()
+        value_html = _text_to_html(value_text)
+    if not _is_empty_review_value(value_text):
+        _remember_review_value(store, "推演链路", value_text, value_html)
+
+
+def build_review_detail_view(
+    section_html: str = "",
+    fields: list | None = None,
+    *,
+    heading: str = "",
+    text: str = "",
+    result: str = "",
+    result_label: str = "",
+    fallback_title: str = "",
+) -> tuple[str, list, str]:
+    """Normalize stored review HTML/fields/text into the v0.0.2 4-field card.
+
+    Returns (section_html, fields, heading). Every display field uses a
+    canonical Chinese label; missing values are "—". Extra labels such as
+    用例标题 are not emitted as rows.
+    """
+    store: dict = {}
+    _collect_fields_from_items(store, fields)
+    html_heading = _collect_fields_from_html(store, section_html or "")
+    _collect_fields_from_prose(store, section_html or "")
+    _collect_fields_from_prose(store, text or "")
+    _collect_unlabeled_body(store, section_html or "", text or "")
+
+    display_heading = (heading or "").strip() or html_heading.strip() or str(store.get("_title") or "").strip() or (fallback_title or "").strip()
+    display_heading = _format_heading_seq(display_heading)
+
+    result_field = store.get("推演结果") or {}
+    if _is_empty_review_value(result_field.get("value_text") or ""):
+        fallback = (result_label or "").strip()
+        if not fallback:
+            fallback = {
+                "pass": "通过",
+                "fail": "失败",
+                "skip": "跳过",
+                "blocked": "阻塞",
+                "untested": "未测",
+            }.get((result or "").strip(), (result or "").strip())
+        if fallback:
+            _remember_review_value(store, "推演结果", fallback, _text_to_html(fallback))
+
+    mark = _result_mark(
+        result or "",
+        result_label or "",
+        (store.get("推演结果") or {}).get("value_text") or "",
+    )
+    out_fields = []
+    for name in REVIEW_DETAIL_FIELD_NAMES:
+        item = store.get(name) or {}
+        value_text = (item.get("value_text") or item.get("value") or "").strip()
+        value_html = (item.get("value_html") or "").strip()
+        if _is_empty_review_value(value_text):
+            value_text = REVIEW_EMPTY_VALUE
+            value_html = ""
+        out_fields.append(
+            {
+                "label": name,
+                "value": value_text,
+                "value_text": value_text,
+                "value_html": value_html,
+            }
+        )
+
+    has_content = any(
+        not _is_empty_review_value(item["value_text"]) for item in out_fields
+    ) or bool(display_heading) or bool((section_html or "").strip()) or bool((text or "").strip())
+    if not has_content:
+        return "", [], display_heading
+    return _build_review_card_html(display_heading, out_fields, mark), out_fields, display_heading
+
+
 def _value_after_label(node: Tag, label_el: Tag) -> str:
     clone = BeautifulSoup(str(node), "lxml")
     root = clone.body or clone

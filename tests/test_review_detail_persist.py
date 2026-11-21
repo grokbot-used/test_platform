@@ -45,7 +45,7 @@ def test_review_detail_reads_stored_fields_for_gma_backend():
         elapsed = time.perf_counter() - t0
         assert data["found"] is True
         labels = [f["label"] for f in data["fields"]]
-        assert labels == ["后端链路", "推演结果", "不通过原因", "备注"]
+        assert labels == ["推演链路", "推演结果", "不通过原因", "备注"]
         assert "推演用例编号" not in data["html"]
         assert "用例标题" not in data["html"]
         assert data["heading"].startswith("#81")

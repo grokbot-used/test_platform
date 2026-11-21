@@ -282,22 +282,20 @@
             <h2 id="comment-drawer-title">测试执行记录 · {{ commentTitle }}</h2>
           </template>
           <template v-else>
-            <h2 id="review-modal-title">
-              {{ modalTitle }}
-              <span
-                v-if="reviewStale"
-                class="stale-warn stale-warn-drawer"
-                tabindex="0"
-                :aria-label="staleTipText"
-              >
-                <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true">
-                  <path d="M10 2.4 18.4 17.2H1.6L10 2.4z" fill="#FDE68A" stroke="#EAB308" stroke-width="1.2" stroke-linejoin="round"/>
-                  <path d="M10 7.4v5.2" fill="none" stroke="#B45309" stroke-width="1.6" stroke-linecap="round"/>
-                  <circle cx="10" cy="14.4" r="0.85" fill="#B45309"/>
-                </svg>
-                <span class="stale-bubble" role="tooltip">{{ staleTipText }}</span>
-              </span>
-            </h2>
+            <h2 id="review-modal-title">{{ modalTitle }}</h2>
+            <span
+              v-if="reviewStale"
+              class="stale-warn stale-warn-drawer"
+              tabindex="0"
+              :aria-label="staleTipText"
+            >
+              <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true">
+                <path d="M10 2.4 18.4 17.2H1.6L10 2.4z" fill="#FDE68A" stroke="#EAB308" stroke-width="1.2" stroke-linejoin="round"/>
+                <path d="M10 7.4v5.2" fill="none" stroke="#B45309" stroke-width="1.6" stroke-linecap="round"/>
+                <circle cx="10" cy="14.4" r="0.85" fill="#B45309"/>
+              </svg>
+              <span class="stale-bubble" role="tooltip">{{ staleTipText }}</span>
+            </span>
             <div v-if="reviewHistory.length" class="review-history" @keydown.esc.stop="historyOpen = false">
               <button
                 type="button"
@@ -335,19 +333,31 @@
         <p v-if="modal.loading" class="muted">正在加载…</p>
         <p v-else-if="modal.error" class="err">{{ modal.error }}</p>
         <template v-else-if="modal.data">
-          <div v-if="reviewSourceMeta.length" class="review-source-meta">
+          <section class="review-source-meta" aria-label="推演信息">
             <div v-for="item in reviewSourceMeta" :key="item.label" class="review-source-item">
               <span class="k">{{ item.label }}</span>
               <span class="v">{{ item.value }}</span>
             </div>
-          </div>
-          <iframe
-            v-if="fragmentPage"
-            class="review-frame review-srcdoc"
-            :srcdoc="fragmentPage"
-            sandbox="allow-same-origin allow-popups"
-            title="推演结果"
-          ></iframe>
+          </section>
+          <section
+            v-if="hasReviewDetail"
+            class="review-card"
+            :data-result="reviewResultMark"
+            aria-label="推演详情"
+          >
+            <h3 class="review-card-title">{{ reviewCardHeading }}</h3>
+            <table class="review-card-table">
+              <tr v-for="field in reviewDetailFields" :key="field.label">
+                <th>{{ field.label }}</th>
+                <td
+                  v-if="fieldHasHtml(field)"
+                  :class="reviewFieldClass(field)"
+                  v-html="field.value_html"
+                ></td>
+                <td v-else :class="reviewFieldClass(field)">{{ fieldDisplayText(field) }}</td>
+              </tr>
+            </table>
+          </section>
           <p v-else class="modal-msg">{{ emptyReviewMessage }}</p>
         </template>
       </div>
@@ -635,7 +645,11 @@ const currentReviewResult = computed(() => modal.value.data?.result || reviewHis
 const currentReviewResultLabel = computed(
   () => modal.value.data?.result_label || reviewHistory.value[0]?.result_label || "未记录"
 );
-const reviewStale = computed(() => Boolean(modal.value.data?.stale));
+const reviewStale = computed(() => {
+  if (Boolean(modal.value.data?.stale)) return true;
+  const current = reviewHistory.value.find((item) => item.id === currentReviewId.value);
+  return Boolean(current?.stale);
+});
 const staleTipText = computed(() =>
   staleTip(modal.value.data?.latest_version || selectedCase.value?.latest_version)
 );
@@ -645,17 +659,66 @@ const fragmentPage = computed(() => {
   return typeof pageHtml === "string" ? pageHtml : "";
 });
 
+const reviewDetailFields = computed(() => {
+  const fields = modal.value.data?.fields;
+  return Array.isArray(fields) ? fields : [];
+});
+
+const reviewCardHeading = computed(() => {
+  const d = modal.value.data || {};
+  return String(
+    d.heading || d.case_title || d.case_key || selectedCase.value?.description || selectedCase.value?.title || ""
+  ).trim();
+});
+
+const hasReviewDetail = computed(() => {
+  const d = modal.value.data || {};
+  return Boolean(d.found || reviewDetailFields.value.length || reviewCardHeading.value);
+});
+
+const reviewResultMark = computed(() => {
+  const d = modal.value.data || {};
+  const result = d.result || "";
+  const label = `${d.result_label || ""} ${reviewDetailFields.value.find((f) => f.label === "推演结果")?.value_text || ""}`;
+  if (result === "fail" || label.includes("不通过") || label.includes("失败")) return "不通过";
+  if (result === "skip" || result === "untested" || label.includes("跳过") || label.includes("不测")) return "跳过";
+  if (result === "pass" || label.includes("通过")) return "通过";
+  return String(d.result_label || "").trim();
+});
+
 const priorityStats = computed(() => doc.value.priority_stats || { total: 0, priorities: [], untested: 0 });
 const showPriorityStats = computed(() => (priorityStats.value.total || 0) > 0 || (priorityStats.value.untested || 0) > 0);
 
 const reviewSourceMeta = computed(() => {
   const d = modal.value.data || {};
+  const time = formatCommentTime(d.created_at);
   return [
-    { label: "仓库", value: d.repo },
-    { label: "分支", value: d.branch },
-    { label: "参与人", value: d.participants },
-  ].filter((item) => String(item.value || "").trim());
+    { label: "仓库", value: String(d.repo || "").trim() || "—" },
+    { label: "分支", value: String(d.branch || "").trim() || "—" },
+    { label: "参与人", value: String(d.participants || "").trim() || "—" },
+    { label: "推演时间", value: time || "—" },
+  ];
 });
+
+function fieldHasHtml(field) {
+  const html = String(field?.value_html || "").trim();
+  return Boolean(html && /<[a-zA-Z]/.test(html));
+}
+
+function fieldDisplayText(field) {
+  const text = String(field?.value_text || field?.value || "").trim();
+  return text || "—";
+}
+
+function reviewFieldClass(field) {
+  if (field?.label === "推演链路") return "chain";
+  if (field?.label !== "推演结果") return "";
+  const mark = reviewResultMark.value;
+  if (mark === "不通过") return "fail";
+  if (mark === "跳过" || mark === "不测") return "skip";
+  if (mark === "通过") return "ok";
+  return "";
+}
 
 function formatPercent(value) {
   const n = Number(value);
@@ -1189,11 +1252,13 @@ async function openReview(endpoint, caseItem) {
   drawer.value = { open: true, mode: "review" };
   modal.value = { open: true, loading: true, error: "", data: null, endpoint };
   try {
+    const ep = caseEndpoints(current).find((item) => (item.endpoint || item.id) === endpoint);
     const data = await api.reviewDetail({
       product_id: productId.value,
       endpoint,
       case_id: current.id,
       case_version: caseVersion.value,
+      review_id: ep?.review_id || undefined,
     });
     modal.value = { open: true, loading: false, error: "", data, endpoint };
   } catch (e) {
@@ -1228,8 +1293,10 @@ function closeModal() {
 }
 
 function openVersionInfo() {
-  const query = productId.value ? { product_id: String(productId.value) } : {};
-  router.push({ name: "case-version-info", query });
+  const query = { ...route.query };
+  if (productId.value) query.product_id = String(productId.value);
+  const href = router.resolve({ name: "case-version-info", query }).href;
+  window.open(href, "_blank", "noopener,noreferrer");
 }
 
 function askDeleteComment(item) {

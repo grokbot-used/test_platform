@@ -626,6 +626,8 @@ input::placeholder, textarea::placeholder { color: var(--text-secondary); opacit
   padding: 12px 16px;
   background: var(--head-bg);
   border-bottom: 1px solid var(--border);
+  position: relative;
+  z-index: 5;
 }
 .case-hd .num {
   font-weight: 700;
@@ -651,6 +653,8 @@ input::placeholder, textarea::placeholder { color: var(--text-secondary); opacit
   flex: 0 1 auto;
   min-width: 0;
   padding: 0 2px;
+  position: relative;
+  z-index: 6;
 }
 .env-node {
   position: relative;
@@ -1010,6 +1014,9 @@ html.drawer-open .doc-scroll {
   flex-wrap: wrap;
   min-width: 0;
   flex: 1;
+  overflow: visible;
+  position: relative;
+  z-index: 2;
 }
 .modal-body { padding: 16px 20px 22px; overflow: auto; min-width: 0; }
 .modal-meta {
@@ -1702,18 +1709,27 @@ html.drawer-open .doc-scroll {
 }
 
 .dock-btn .stale-warn {
-  position: static;
+  position: relative;
+  z-index: 50;
 }
 .dock-btn .stale-bubble {
-  right: calc(100% + 8px);
-  left: auto;
-  top: 10px;
-  bottom: auto;
-  transform: none;
+  left: 50%;
+  right: auto;
+  bottom: calc(100% + 8px);
+  top: auto;
+  transform: translateX(-50%);
+  margin: 0;
+  z-index: 50;
 }
 .dock-btn .stale-bubble::after {
-  top: 12px;
-  transform: none;
+  top: 100%;
+  bottom: auto;
+  left: 50%;
+  right: auto;
+  transform: translateX(-50%);
+  border: 6px solid transparent;
+  border-top-color: #FFFBEB;
+  filter: drop-shadow(0 1px 0 #F5D98A);
 }
 .case-card:has(.stale-warn),
 .case-entries:has(.stale-warn),
@@ -1723,7 +1739,14 @@ html.drawer-open .doc-scroll {
 }
 .case-card:has(.stale-warn:hover),
 .case-card:has(.stale-warn:focus-visible) {
-  z-index: 4;
+  z-index: 40;
+}
+.case-entries:has(.stale-warn:hover),
+.case-entries:has(.stale-warn:focus-visible),
+.dock-btn:has(.stale-warn:hover),
+.dock-btn:has(.stale-warn:focus-visible) {
+  z-index: 50;
+  overflow: visible;
 }
 .side-drawer .drawer-hd {
   overflow: visible;
@@ -1865,4 +1888,82 @@ html.drawer-open .doc-scroll {
     min-height: 0;
   }
   .version-tree::before { left: 21px; }
+}
+
+.review-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.review-card[data-result="不通过"] {
+  border-color: #FECACA;
+  border-left: 4px solid #F87171;
+}
+.review-card[data-result="跳过"],
+.review-card[data-result="不测"] {
+  border-color: #FDBA74;
+  border-left: 4px solid #F59E0B;
+}
+.review-card[data-result="通过"] {
+  border-left: 4px solid #86EFAC;
+}
+.review-card-title {
+  margin: 0;
+  padding: 12px 16px;
+  font-size: 15px;
+  line-height: 22px;
+  font-weight: 700;
+  background: var(--head-bg);
+  border-bottom: 1px solid var(--border);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.review-card[data-result="不通过"] .review-card-title { background: #FEF2F2; }
+.review-card[data-result="跳过"] .review-card-title,
+.review-card[data-result="不测"] .review-card-title { background: #FFF7ED; }
+.review-card-table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0;
+  table-layout: fixed;
+}
+.review-card-table th,
+.review-card-table td {
+  border: 1px solid var(--border);
+  border-left: 0;
+  border-right: 0;
+  padding: 8px 10px;
+  vertical-align: top;
+  text-align: left;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.review-card-table th {
+  width: 140px;
+  background: #F6F7F9;
+  color: var(--text);
+  font-weight: 600;
+}
+.review-card-table tr:last-child th,
+.review-card-table tr:last-child td { border-bottom: 0; }
+.review-card-table .ok { color: var(--ok); font-weight: 600; }
+.review-card-table .fail { color: var(--fail); font-weight: 600; }
+.review-card-table .skip { color: var(--skip); font-weight: 600; }
+.review-card-table code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  background: #EEF2F7;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+.side-drawer .review-card { flex: 1 1 auto; }
+.stale-warn-drawer {
+  flex: 0 0 auto;
+  overflow: visible;
 }
