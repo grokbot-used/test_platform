@@ -30,6 +30,9 @@ log = logging.getLogger(__name__)
 
 REVIEW_REPORT_TYPES = frozenset({"frontend_review", "backend_review"})
 VALID_ENDPOINTS = frozenset(ENDPOINT_LABELS)
+FAIL_FILTER_ENDPOINTS = ("backend", "web", "android", "ios")
+REVIEW_FILTER_ENDPOINTS = FAIL_FILTER_ENDPOINTS
+REVIEW_FILTER_RESULTS = ("pass", "fail", "skip")
 VALID_RESULTS = frozenset({"pass", "fail", "skip", "blocked", "untested", ""})
 EMPTY_MESSAGE = "当前用例暂无{label}推演结果"
 
@@ -62,6 +65,92 @@ def normalize_endpoint(value: str | None) -> str:
     if text not in VALID_ENDPOINTS:
         raise HTTPException(400, "未知端")
     return text
+
+
+
+def _normalize_filter_values(values, allowed: tuple[str, ...], unknown_msg: str) -> list[str]:
+    if not values or not isinstance(values, (list, tuple, str, set)):
+        return []
+    if isinstance(values, str):
+        values = [values]
+    raw: list[str] = []
+    for item in values:
+        for part in str(item).split(","):
+            part = part.strip()
+            if part:
+                raw.append(part)
+    out: list[str] = []
+    seen: set[str] = set()
+    for value in raw:
+        if value not in allowed:
+            raise HTTPException(400, unknown_msg)
+        if value not in seen:
+            seen.add(value)
+            out.append(value)
+    return out
+
+
+def normalize_review_endpoints(values) -> list[str]:
+    return _normalize_filter_values(values, REVIEW_FILTER_ENDPOINTS, "未知端")
+
+
+def normalize_review_results(values) -> list[str]:
+    return _normalize_filter_values(values, REVIEW_FILTER_RESULTS, "未知的推演结果")
+
+
+def normalize_fail_endpoints(values) -> list[str]:
+    return normalize_review_endpoints(values)
+
+
+def filter_cases_by_review(
+    db: Session,
+    case_ids: list[int],
+    endpoints: list[str] | None = None,
+    results: list[str] | None = None,
+) -> set[int]:
+    """Cases whose latest review matches any selected endpoint and any selected result.
+
+    Empty endpoints means all four ends; empty results means any recorded result.
+    Within each list the match is OR; the two lists are AND.
+    """
+    endpoints = list(endpoints or [])
+    results = list(results or [])
+    if not case_ids or (not endpoints and not results):
+        return set()
+    best = latest_review_map(db, case_ids)
+    ends = endpoints or list(REVIEW_FILTER_ENDPOINTS)
+    allowed = set(results) if results else None
+    matched: set[int] = set()
+    for case_id in case_ids:
+        for endpoint in ends:
+            row = best.get((case_id, endpoint))
+            if row is None:
+                continue
+            if allowed is None or (row.result or "") in allowed:
+                matched.add(case_id)
+                break
+    return matched
+
+
+def filter_cases_by_endpoint_fail(db: Session, case_ids: list[int], endpoints: list[str]) -> set[int]:
+    return filter_cases_by_review(db, case_ids, endpoints=endpoints, results=["fail"])
+
+
+def filter_cases_by_stale_review(db: Session, case_ids: list[int]) -> set[int]:
+    """Cases whose latest review on any endpoint shows the stale (失真) warning."""
+    if not case_ids:
+        return set()
+    best = latest_review_map(db, case_ids)
+    current = current_fingerprints_by_case(db, case_ids)
+    matched: set[int] = set()
+    for case_id in case_ids:
+        current_fp = current.get(case_id, "")
+        for endpoint in FAIL_FILTER_ENDPOINTS:
+            row = best.get((case_id, endpoint))
+            if row is not None and is_review_stale(row, current_fp, case=row.case):
+                matched.add(case_id)
+                break
+    return matched
 
 
 def _fields_json(fields) -> str:

@@ -5,7 +5,7 @@ import shutil
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 import markdown
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
@@ -930,6 +930,9 @@ def get_case_docs(
     version: str | None = None,
     q: str | None = None,
     priority: str | None = None,
+    review_endpoints: Annotated[list[str] | None, Query()] = None,
+    review_results: Annotated[list[str] | None, Query()] = None,
+    stale: bool = False,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=1000),
     db: Session = Depends(get_db),
@@ -1003,6 +1006,24 @@ def get_case_docs(
             if needle not in blob:
                 continue
         filtered.append((case, lv))
+
+    from app.case_reviews import (
+        filter_cases_by_review,
+        filter_cases_by_stale_review,
+        normalize_review_endpoints,
+        normalize_review_results,
+    )
+
+    review_eps = normalize_review_endpoints(review_endpoints)
+    review_res = normalize_review_results(review_results)
+    if review_eps or review_res:
+        kept_ids = filter_cases_by_review(
+            db, [c.id for c, _ in filtered], endpoints=review_eps, results=review_res
+        )
+        filtered = [(c, lv) for c, lv in filtered if c.id in kept_ids]
+    if stale:
+        stale_ids = filter_cases_by_stale_review(db, [c.id for c, _ in filtered])
+        filtered = [(c, lv) for c, lv in filtered if c.id in stale_ids]
 
     total = len(filtered)
     page_count = max(1, (total + page_size - 1) // page_size) if total else 1

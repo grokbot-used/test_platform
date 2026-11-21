@@ -53,6 +53,7 @@
       </div>
 
       <div class="toolbar">
+        <div class="toolbar-row">
         <label>优先级
           <select v-model="priority" @change="onFilterChange">
             <option value="">全部</option>
@@ -89,6 +90,85 @@
           <button type="button" :disabled="loading || page >= pageCount" @click="goPage(page + 1)">下一页</button>
         </div>
         <span class="stats">第 {{ rangeStart }}–{{ rangeEnd }} 条 / 共 {{ doc.total || 0 }} 条</span>
+        </div>
+        <div class="toolbar-row toolbar-filters">
+        <div ref="endpointFilterEl" class="multi-filter">
+          <span class="multi-filter-label">推演端侧</span>
+          <button
+            type="button"
+            class="multi-filter-btn"
+            :aria-expanded="endpointFilterOpen"
+            aria-haspopup="listbox"
+            aria-label="推演端侧过滤"
+            @click="toggleEndpointMenu"
+          >
+            <span class="multi-filter-value">{{ endpointFilterLabel }}</span>
+            <span class="multi-filter-caret" aria-hidden="true"></span>
+          </button>
+          <div v-if="endpointFilterOpen" class="multi-filter-menu" role="listbox" aria-multiselectable="true">
+            <button
+              type="button"
+              class="multi-filter-item"
+              :class="{ on: !reviewEndpoints.length }"
+              role="option"
+              :aria-selected="!reviewEndpoints.length"
+              @click="clearEndpointFilter"
+            >全部</button>
+            <button
+              v-for="opt in ENDPOINT_FILTERS"
+              :key="opt.id"
+              type="button"
+              class="multi-filter-item"
+              :class="{ on: reviewEndpoints.includes(opt.id) }"
+              role="option"
+              :aria-selected="reviewEndpoints.includes(opt.id)"
+              @click="toggleEndpointFilter(opt.id)"
+            >{{ opt.label }}</button>
+          </div>
+        </div>
+        <div ref="resultFilterEl" class="multi-filter">
+          <span class="multi-filter-label">推演结果</span>
+          <button
+            type="button"
+            class="multi-filter-btn"
+            :aria-expanded="resultFilterOpen"
+            aria-haspopup="listbox"
+            aria-label="推演结果过滤"
+            @click="toggleResultMenu"
+          >
+            <span class="multi-filter-value">{{ resultFilterLabel }}</span>
+            <span class="multi-filter-caret" aria-hidden="true"></span>
+          </button>
+          <div v-if="resultFilterOpen" class="multi-filter-menu" role="listbox" aria-multiselectable="true">
+            <button
+              type="button"
+              class="multi-filter-item"
+              :class="{ on: !reviewResults.length }"
+              role="option"
+              :aria-selected="!reviewResults.length"
+              @click="clearResultFilter"
+            >全部</button>
+            <button
+              v-for="opt in RESULT_FILTERS"
+              :key="opt.id"
+              type="button"
+              class="multi-filter-item"
+              :class="{ on: reviewResults.includes(opt.id) }"
+              role="option"
+              :aria-selected="reviewResults.includes(opt.id)"
+              @click="toggleResultFilter(opt.id)"
+            >{{ opt.label }}</button>
+          </div>
+        </div>
+        <button
+          type="button"
+          class="filter-toggle"
+          :class="{ on: staleOnly }"
+          :aria-pressed="staleOnly ? 'true' : 'false'"
+          aria-label="只看推演失真的用例"
+          @click="toggleStaleFilter"
+        >推演失真</button>
+        </div>
       </div>
 
       <p v-if="error" class="err">{{ error }}</p>
@@ -158,7 +238,7 @@
               <span
                 v-if="ep.stale"
                 class="stale-warn"
-                :title="staleTipFor(c)"
+                tabindex="0"
                 :aria-label="staleTipFor(c)"
               >
                 <svg viewBox="0 0 20 20" width="14" height="14" aria-hidden="true">
@@ -166,6 +246,7 @@
                   <path d="M10 7.4v5.2" fill="none" stroke="#B45309" stroke-width="1.6" stroke-linecap="round"/>
                   <circle cx="10" cy="14.4" r="0.85" fill="#B45309"/>
                 </svg>
+                <span class="stale-bubble" role="tooltip">{{ staleTipFor(c) }}</span>
               </span>
             </span>
             <span class="dock-result">{{ ep.result_label || "暂无" }}</span>
@@ -205,8 +286,8 @@
               {{ modalTitle }}
               <span
                 v-if="reviewStale"
-                class="stale-warn"
-                :title="staleTipText"
+                class="stale-warn stale-warn-drawer"
+                tabindex="0"
                 :aria-label="staleTipText"
               >
                 <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true">
@@ -214,6 +295,7 @@
                   <path d="M10 7.4v5.2" fill="none" stroke="#B45309" stroke-width="1.6" stroke-linecap="round"/>
                   <circle cx="10" cy="14.4" r="0.85" fill="#B45309"/>
                 </svg>
+                <span class="stale-bubble" role="tooltip">{{ staleTipText }}</span>
               </span>
             </h2>
             <div v-if="reviewHistory.length" class="review-history" @keydown.esc.stop="historyOpen = false">
@@ -436,6 +518,18 @@ const BlockText = defineComponent({
 
 const ENDPOINT_ORDER = ["backend", "web", "android", "ios"];
 const ENDPOINT_LABELS = { backend: "后端", web: "web", android: "安卓", ios: "ios" };
+const ENDPOINT_FILTERS = [
+  { id: "backend", label: "后端" },
+  { id: "web", label: "web" },
+  { id: "android", label: "安卓" },
+  { id: "ios", label: "ios" },
+];
+const RESULT_ORDER = ["pass", "fail", "skip"];
+const RESULT_FILTERS = [
+  { id: "pass", label: "通过" },
+  { id: "fail", label: "失败" },
+  { id: "skip", label: "跳过" },
+];
 const ENV_ICON = {
   test: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M8 3h4M9 3v4.1L5.1 15.3A2 2 0 0 0 6.9 18h6.2a2 2 0 0 0 1.8-2.7L11 7.1V3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M6.3 13h7.4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>',
   cn_pre: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4.5 16.5V7.2L10 3.8l5.5 3.4v9.3H4.5z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M8 16.5v-4h4v4M8 8.4h.01M12 8.4h.01M10 11h.01" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>',
@@ -472,6 +566,13 @@ const doc = ref({ items: [], pending: [], total: 0, version: "", page: 1, page_s
 const qInput = ref("");
 const q = ref("");
 const priority = ref("");
+const reviewEndpoints = ref([]);
+const reviewResults = ref([]);
+const endpointFilterOpen = ref(false);
+const resultFilterOpen = ref(false);
+const endpointFilterEl = ref(null);
+const resultFilterEl = ref(null);
+const staleOnly = ref(false);
 const page = ref(1);
 const pageInput = ref("1");
 const pageSize = ref(20);
@@ -693,6 +794,9 @@ async function reload() {
       version: caseVersion.value || undefined,
       q: q.value || undefined,
       priority: priority.value || undefined,
+      review_endpoints: reviewEndpoints.value.length ? reviewEndpoints.value.join(",") : undefined,
+      review_results: reviewResults.value.length ? reviewResults.value.join(",") : undefined,
+      stale: staleOnly.value || undefined,
       page: page.value,
       page_size: pageSize.value,
     });
@@ -714,6 +818,11 @@ async function onProductChange() {
   caseVersion.value = "";
   selectedId.value = null;
   priority.value = "";
+  reviewEndpoints.value = [];
+  reviewResults.value = [];
+  endpointFilterOpen.value = false;
+  resultFilterOpen.value = false;
+  staleOnly.value = false;
   page.value = 1;
   await reload();
 }
@@ -721,12 +830,78 @@ async function onProductChange() {
 function onVersionChange() {
   page.value = 1;
   priority.value = "";
+  reviewEndpoints.value = [];
+  reviewResults.value = [];
+  endpointFilterOpen.value = false;
+  resultFilterOpen.value = false;
+  staleOnly.value = false;
   reload();
 }
 
 function onFilterChange() {
   page.value = 1;
   reload();
+}
+
+function selectedFilterLabel(selected, options) {
+  if (!selected.length) return "全部";
+  const labels = Object.fromEntries(options.map((opt) => [opt.id, opt.label]));
+  return selected.map((id) => labels[id] || id).join("、");
+}
+
+const endpointFilterLabel = computed(() => selectedFilterLabel(reviewEndpoints.value, ENDPOINT_FILTERS));
+const resultFilterLabel = computed(() => selectedFilterLabel(reviewResults.value, RESULT_FILTERS));
+
+function toggleSelected(current, id, order) {
+  return current.includes(id)
+    ? current.filter((item) => item !== id)
+    : order.filter((item) => item === id || current.includes(item));
+}
+
+function toggleEndpointMenu() {
+  endpointFilterOpen.value = !endpointFilterOpen.value;
+  if (endpointFilterOpen.value) resultFilterOpen.value = false;
+}
+
+function toggleResultMenu() {
+  resultFilterOpen.value = !resultFilterOpen.value;
+  if (resultFilterOpen.value) endpointFilterOpen.value = false;
+}
+
+function clearEndpointFilter() {
+  if (!reviewEndpoints.value.length) return;
+  reviewEndpoints.value = [];
+  onFilterChange();
+}
+
+function clearResultFilter() {
+  if (!reviewResults.value.length) return;
+  reviewResults.value = [];
+  onFilterChange();
+}
+
+function toggleEndpointFilter(id) {
+  reviewEndpoints.value = toggleSelected(reviewEndpoints.value, id, ENDPOINT_ORDER);
+  onFilterChange();
+}
+
+function toggleResultFilter(id) {
+  reviewResults.value = toggleSelected(reviewResults.value, id, RESULT_ORDER);
+  onFilterChange();
+}
+
+function toggleStaleFilter() {
+  staleOnly.value = !staleOnly.value;
+  onFilterChange();
+}
+
+function onReviewFilterPointerDown(event) {
+  if (endpointFilterOpen.value && !endpointFilterEl.value?.contains(event.target)) {
+    endpointFilterOpen.value = false;
+  }
+  if (resultFilterOpen.value && !resultFilterEl.value?.contains(event.target)) {
+    resultFilterOpen.value = false;
+  }
 }
 
 function onPageSizeChange() {
@@ -1224,6 +1399,11 @@ function onKey(e) {
     cancelDeleteComment();
     return;
   }
+  if (endpointFilterOpen.value || resultFilterOpen.value) {
+    endpointFilterOpen.value = false;
+    resultFilterOpen.value = false;
+    return;
+  }
   if (historyOpen.value) {
     historyOpen.value = false;
     return;
@@ -1240,6 +1420,9 @@ async function exportTable() {
       version: caseVersion.value || undefined,
       q: q.value || undefined,
       priority: priority.value || undefined,
+      review_endpoints: reviewEndpoints.value.length ? reviewEndpoints.value.join(",") : undefined,
+      review_results: reviewResults.value.length ? reviewResults.value.join(",") : undefined,
+      stale: staleOnly.value || undefined,
       page: 1,
       page_size: 1000,
     });
@@ -1293,6 +1476,7 @@ function scrollToTop() {
 onMounted(async () => {
   window.addEventListener("keydown", onKey);
   window.addEventListener("pointerdown", onHistoryPointerDown, true);
+  window.addEventListener("pointerdown", onReviewFilterPointerDown, true);
   window.addEventListener("scroll", onScroll, { passive: true });
   onScroll();
   try {
@@ -1311,6 +1495,7 @@ onMounted(async () => {
 onUnmounted(() => {
   window.removeEventListener("keydown", onKey);
   window.removeEventListener("pointerdown", onHistoryPointerDown, true);
+  window.removeEventListener("pointerdown", onReviewFilterPointerDown, true);
   window.removeEventListener("scroll", onScroll);
   clearTimeout(qTimer);
   clearCommentFocus();
